@@ -147,8 +147,8 @@ class BitrixDealRepository(
                     [],
                     method=self._bitrix_list_method,
                     params={
-                        self._select_param_name: ["*", "UF_*"]
-                    }
+                        self._select_param_name: ["*", "UF_*"],
+                    },
                 )
                 results = results[:limit] if limit != -1 else results
             else:

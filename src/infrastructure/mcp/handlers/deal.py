@@ -7,14 +7,15 @@ import json
 from typing import Any
 
 from src.domain.entities.deal import Deal
-from src.infrastructure.logging.logger import logger
-from src.infrastructure.mcp.server import BitrixMCPServer
 
 # Получаем зависимости напрямую из провайдера
 from src.infrastructure.ioc import provider
+from src.infrastructure.logging.logger import logger
+from src.infrastructure.mcp.server import BitrixMCPServer
 
 # Создаем зависимости напрямую
-repository_factory = provider.provide_repository_factory()
+bitrix_client = provider.provide_bitrix_client()
+repository_factory = provider.provide_repository_factory(bitrix_client)
 deal_service = provider.provide_deal_service(repository_factory)
 
 

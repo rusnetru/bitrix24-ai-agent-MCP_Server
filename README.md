@@ -1,153 +1,201 @@
 # Bitrix24 MCP Server
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/release/python-3120/)
-[![Code style: ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
+[![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
 
-Интеграционный сервер, использующий Model Context Protocol (MCP), для предоставления доступа к данным и функциям Bitrix24 для больших языковых моделей (LLM) и других AI-агентов. LLM могут безопасно взаимодействовать с вашими CRM-данными (контакты, сделки), используя предопределенные "инструменты" и "ресурсы", предоставляемые этим сервером через стандартный протокол MCP.
+**MCP-сервер для Bitrix24 CRM: подключите AI-агента к сделкам, контактам и чатам за 5 минут.**
 
-## Ключевые Особенности
+Bitrix24 MCP Server предоставляет стандартизированный [Model Context Protocol](https://modelcontextprotocol.io/) интерфейс, через который любой AI-агент (Claude, GPT, DeepSeek, локальные LLM) может:
 
-*   **Интеграция с Bitrix24:** Доступ к контактам и сделкам через Bitrix24 REST API.
-*   **Model Context Protocol (MCP):** Предоставляет стандартизированный интерфейс для взаимодействия с AI-моделями.
-    *   **Инструменты (Tools):** Функции, которые AI может вызывать (например, поиск контактов, обновление стадии сделки).
-    *   **Ресурсы (Resources):** Данные, которые AI может запрашивать (например, информация о конкретном контакте или список активных сделок).
-    *   **Промпты (Prompts):** Шаблоны для генерации запросов к AI.
-*   **Асинхронность:** Построен на `asyncio` для эффективной обработки запросов.
-*   **Внедрение Зависимостей:** Использует `wireup` для управления зависимостями.
-*   **Конфигурируемость:** Настройки управляются через переменные окружения.
-*   **Структурированное Логирование:** Использует `structlog` для удобного отслеживания событий.
-*   **Расширяемость:** Легко добавлять поддержку новых сущностей Bitrix24 или новые MCP инструменты/ресурсы.
+- 🔍 Искать контакты, сделки, лиды
+- 📝 Создавать и обновлять CRM-сущности
+- 💬 Отвечать в чатах Bitrix24 как обычный сотрудник
+- 📋 Писать комментарии в таймлайн сделок
 
-## Технологии
+Всё через единый протокол. Без написания REST-обёрток. Без парсинга вебхуков. Один раз настроил — и забыл.
 
-*   Python 3.12+
-*   [Fast-Bitrix24](https://github.com/leshchenko1979/fast_bitrix24): Клиент для Bitrix24 REST API
-*   [MCP (Model Context Protocol)](https://github.com/mentalcalculation/mcp): Фреймворк для создания MCP серверов (`fastmcp`)
-*   [Pydantic & Pydantic-Settings](https://docs.pydantic.dev/): Валидация данных и управление настройками
-*   [Structlog](https://www.structlog.org/): Структурированное логирование
-*   [Ruff](https://github.com/astral-sh/ruff): Линтер и форматер кода
-*   Asyncio
-*   [Dishka](https://pypi.org/project/dishka/): CLI-утилиты для управления зависимостями и скриптами
+## Быстрый старт (5 минут)
 
-## Начало Работы
-
-### Предварительные Требования
-
-1.  **Python:** Версия 3.12 или выше.
-2.  **Bitrix24:**
-    *   Аккаунт Bitrix24 (облачный или коробочный).
-    *   Входящий вебхук (Webhook) с необходимыми правами (как минимум `crm`). [Как создать вебхук](https://helpdesk.bitrix24.ru/open/20886106/).
-
-### Конфигурация
-
-Серверу требуется задать переменную окружения `BITRIX_WEBHOOK_URL`:
+### 1. Установка
 
 ```bash
-export BITRIX_WEBHOOK_URL="https://your-domain.bitrix24.ru/rest/1/yoursecretcode/"
+pip install bitrix24-mcp
 ```
 
-### Запуск Сервера
+### 2. Настройка
 
-запустите MCP сервер:
+Создайте входящий вебхук в Bitrix24 (права: `crm`, `imbot`, `user`) и пропишите URL:
 
 ```bash
-uvx bitrix24-mcp
+export BITRIX_WEBHOOK_URL="https://your.bitrix24.ru/rest/1/your-token/"
 ```
 
-Вы увидите логи в консоли, включая информацию о зарегистрированных MCP инструментах и ресурсах.
-
-### Запуск Тестового Скрипта
-
-Для проверки базовой работоспособности интеграции с Bitrix24 API можно запустить тестовый скрипт:
+### 3. Запуск
 
 ```bash
-python test_services.py
+bitrix24-mcp
 ```
-Скрипт выполнит несколько запросов к API Bitrix24 (получение списка контактов, получение контакта по ID, и т.д.) и выведет результаты.
 
-## Использование
+Готово. Сервер слушает stdio — можно подключать AI-клиент (Claude Desktop, Cursor, Hermes Agent).
 
-Запущенный MCP сервер готов принимать запросы от MCP-совместимых клиентов или LLM.
+## Подключение AI-агента к чатам Bitrix24
 
-### Доступные MCP Инструменты (Tools)
+Сервер включает готовый слой для чат-ботов (`imbot`):
 
-Инструменты - это функции, которые AI может попросить выполнить.
+```python
+from src.domain.entities.bot_event import BotIncomingMessage, BotReply
+from src.application.services.chat_bot import ChatBotService
 
-*   `tool://get_contact`
-    *   **Описание:** Получение информации о контакте по ID.
-    *   **Параметры:** `contact_id: int`
-    *   **Возвращает:** JSON-строка с данными контакта.
-*   `tool://search_contacts`
-    *   **Описание:** Поиск контактов по имени, телефону или email.
-    *   **Параметры:** `query: str`, `search_type: str = "name"` (`name`, `phone`, `email`), `limit: int = 10`
-    *   **Возвращает:** JSON-строка со списком найденных контактов.
-*   `tool://list_contacts`
-    *   **Описание:** Получение списка контактов с возможностью фильтрации.
-    *   **Параметры:** `limit: int = 50`, `company_id: int | None = None`
-    *   **Возвращает:** JSON-строка со списком контактов.
-*   `tool://get_deal`
-    *   **Описание:** Получение информации о сделке по ID.
-    *   **Параметры:** `deal_id: int`
-    *   **Возвращает:** JSON-строка с данными сделки.
-*   `tool://list_deals`
-    *   **Описание:** Получение списка сделок с возможностью фильтрации.
-    *   **Параметры:** `active_only: bool = False`, `contact_id: int | None = None`, `company_id: int | None = None`, `limit: int = 50`
-    *   **Возвращает:** JSON-строка со списком сделок.
-*   `tool://update_deal_stage`
-    *   **Описание:** Обновление стадии сделки.
-    *   **Параметры:** `deal_id: int`, `stage_id: str` (например, `C14:WON`)
-    *   **Возвращает:** JSON-строка с результатом операции (`{"success": true/false, "message": "..."}`).
+class MyAIAgent:
+    """Ваш AI-агент. Единственное, что нужно написать."""
 
-### Доступные MCP Ресурсы (Resources)
+    async def handle_message(self, message: BotIncomingMessage) -> BotReply:
+        # Вызовите свою LLM
+        answer = await my_llm.ask(message.text)
+        return BotReply(
+            text=answer,
+            # Опционально: дублировать в таймлайн сделки
+            timeline_comment=TimelineCommentTarget(
+                entity_type="deal",
+                entity_id=123
+            )
+        )
 
-Ресурсы - это данные, которые AI может запросить по URI.
+# Регистрация — остальное сервер берёт на себя
+chat_bot_service.register_agent(bot_id, MyAIAgent())
+```
 
-*   `contact://{contact_id}`
-    *   **Описание:** Получение данных контакта по ID в читаемом формате.
-    *   **Пример:** `contact://123`
-    *   **Возвращает:** Текстовое представление данных контакта.
-*   `deal://{deal_id}`
-    *   **Описание:** Получение данных сделки по ID в читаемом формате.
-    *   **Пример:** `deal://456`
-    *   **Возвращает:** Текстовое представление данных сделки.
-*   `deals://active`
-    *   **Описание:** Получение списка активных сделок в читаемом формате.
-    *   **Пример:** `deals://active`
-    *   **Возвращает:** Текстовое представление списка активных сделок.
+После регистрации ваш AI-агент появляется в общих чатах Bitrix24 как обычный сотрудник. Менеджер пишет — агент отвечает. Комментарии автоматически попадают в таймлайн.
 
-## Разработка и Участие
+## MCP-инструменты
 
-Мы приветствуем контрибьюторов!
+### CRM: Контакты
 
-### Настройка Среды Разработки
+| Инструмент | Описание |
+|-----------|----------|
+| `get_contact` | Получить контакт по ID |
+| `search_contacts` | Поиск по имени, телефону, email |
+| `list_contacts` | Список с фильтрацией |
 
-1.  Выполните шаги из раздела [Установка](#установка).
-2.  Установите зависимости для разработки:
-    ```bash
-    uv sync
-    ```
+### CRM: Сделки
 
-### Качество Кода
+| Инструмент | Описание |
+|-----------|----------|
+| `get_deal` | Сделка по ID |
+| `list_deals` | Список с фильтрами (активные, по контакту) |
+| `update_deal_stage` | Передвинуть сделку по воронке |
+| `create_deal` | Создать новую сделку |
 
-*   **Форматирование и Линтинг:** Используется `ruff`. Перед коммитом рекомендуется запускать:
-    ```bash
-    ruff format .
-    ruff check . --fix
-    ```
-*   **Типизация:** Проект использует строгую типизацию Python.
+### CRM: Лиды
 
-### Процесс Внесения Изменений
+| Инструмент | Описание |
+|-----------|----------|
+| `create_lead` | Создать лид |
+| `list_leads` | Список с поиском |
+| `get_lead` | Лид по ID |
 
-1.  **Создайте Issue:** Опишите проблему или предлагаемое улучшение в разделе Issues репозитория.
-2.  **Форкните репозиторий:** Создайте свою копию проекта.
-3.  **Создайте ветку:** `git checkout -b feature/your-feature-name` или `bugfix/issue-number`.
-4.  **Внесите изменения:** Напишите код и тесты (если применимо).
-5.  **Проверьте качество кода:** Запустите `ruff`.
-6.  **Сделайте коммит:** `git commit -m "feat: Add support for Bitrix24 Leads"` (следуйте [Conventional Commits](https://www.conventionalcommits.org/) если возможно).
-7.  **Отправьте изменения в ваш форк:** `git push origin feature/your-feature-name`.
-8.  **Создайте Pull Request:** Откройте Pull Request из вашей ветки в `main` ветку основного репозитория. Опишите внесенные изменения и свяжите PR с созданным Issue.
+### Чат-бот
+
+| Инструмент | Описание |
+|-----------|----------|
+| `ChatBotService.register_bot` | Зарегистрировать бота в портале |
+| `ChatBotService.register_agent` | Подключить AI-агента к боту |
+| `ChatBotService.dispatch_event` | Обработка входящих сообщений |
+
+### Задачи
+
+| Инструмент | Описание |
+|-----------|----------|
+| `search_tasks` | Поиск задач |
+| `create_task` | Создать задачу |
+| `get_task_by_id` | Задача по ID |
+
+## MCP-ресурсы
+
+AI-агент может запрашивать данные по URI:
+
+| Ресурс | Пример | Назначение |
+|--------|--------|------------|
+| `contact://{id}` | `contact://123` | Данные контакта |
+| `deal://{id}` | `deal://456` | Данные сделки |
+| `deals://active` | `deals://active` | Все активные сделки |
+
+## Подключение к AI-клиентам
+
+### Claude Desktop
+
+```json
+{
+  "mcpServers": {
+    "bitrix24": {
+      "command": "bitrix24-mcp",
+      "env": {
+        "BITRIX_WEBHOOK_URL": "https://your.bitrix24.ru/rest/1/token/"
+      }
+    }
+  }
+}
+```
+
+### Hermes Agent
+
+```yaml
+mcp_servers:
+  bitrix24:
+    transport: stdio
+    command: bitrix24-mcp
+    env:
+      BITRIX_WEBHOOK_URL: "https://your.bitrix24.ru/rest/1/token/"
+```
+
+### Cursor / VS Code
+
+Добавьте в `.cursor/mcp.json` или настройки Cursor MCP.
+
+## Чат-бот: полный пример
+
+```bash
+export BOT_EVENT_HANDLER_URL="https://your-domain.example.com/bot/events"
+python examples/custom_agent_example.py
+```
+
+Сервер регистрирует бота, поднимает HTTP-обработчик вебхуков и подключает AI-агента. Подробнее: [docs/source/ai_chat_agent.rst](docs/source/ai_chat_agent.rst).
+
+## Архитектура
+
+```
+AI-клиент (Claude/DeepSeek/GPT)
+        │
+        ▼ MCP (stdio)
+┌───────────────────────┐
+│  Bitrix24 MCP Server  │
+│                       │
+│  ┌─────────────────┐  │
+│  │  MCP Handlers   │  │  ← CRM: contacts, deals, leads
+│  ├─────────────────┤  │
+│  │  ChatBotService │  │  ← imbot: register, dispatch, reply
+│  ├─────────────────┤  │
+│  │  WebhookServer  │  │  ← HTTP: приём событий Bitrix24
+│  └─────────────────┘  │
+└───────────┬───────────┘
+            │ REST API (fast_bitrix24)
+            ▼
+     Bitrix24 Cloud
+```
+
+## Требования
+
+- Python 3.12+
+- Входящий вебхук Bitrix24 (права: `crm`, `imbot`, `user`)
+- Для чат-бота: публичный HTTPS URL (ngrok, cloudflared, или любой хостинг) для приёма вебхуков
 
 ## Лицензия
 
-Этот проект лицензирован под лицензией MIT — см. файл [LICENSE](LICENSE) для подробностей.
+MIT. Подробности в [LICENSE](LICENSE).
+
+## Ссылки
+
+- [Model Context Protocol](https://modelcontextprotocol.io/)
+- [Bitrix24 REST API](https://dev.1c-bitrix.ru/rest_help/)
+- [AgentIREST — AI-агенты для бизнеса](https://agentirest.com)

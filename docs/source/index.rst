@@ -12,6 +12,7 @@
 
    quickstart
    installation
+   ai_chat_agent
    modules/domain/index
    modules/application/index
    modules/infrastructure/index

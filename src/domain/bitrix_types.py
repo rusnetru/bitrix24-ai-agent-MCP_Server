@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Self
 
-type BitrixID = int
-type BitrixCurrencyID = str
-type BitrixStageID = str
-type BitrixCategoryID = int
+BitrixID = int
+BitrixCurrencyID = str
+BitrixStageID = str
+BitrixCategoryID = int
 
 
 @dataclass
