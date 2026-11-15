@@ -151,6 +151,8 @@ async def cmd_serve(app: App) -> int:
         tasks.append(asyncio.create_task(bot.poll_watched()))
     if s.timeline_scan_types:
         tasks.append(asyncio.create_task(bot.scan_timelines()))
+    if s.auto_assist_types:
+        tasks.append(asyncio.create_task(bot.assist_loop()))
     try:
         await asyncio.Event().wait()
     finally:

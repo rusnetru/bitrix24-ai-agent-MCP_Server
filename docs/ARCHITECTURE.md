@@ -26,6 +26,8 @@
 |---|---|---|
 | CRM: сделки, лиды, контакты, компании, предложения, счета | поиск, список с фильтрами, карточка с подписанными полями и стадиями, создание, изменение, смена стадии, связи, история стадий, дела | `crm.item.*`, `crm.status.list`, `crm.category.list`, `crm.duplicate.findbycomm`, `crm.{lead,contact,company}.*` (телефоны и email), `crm.stagehistory.list`, `crm.activity.todo.add` |
 | **Смарт-процессы** (любые, по entityTypeId или названию) | то же, что для сделок, плюс справочник типов, воронки и стадии, пользовательские поля с вариантами списков | `crm.type.list`, `crm.item.*`, `crm.item.fields`, `crm.status.list` (`DYNAMIC_<id>_STAGE_<cat>`) |
+| **Письма** в таймлайне | список писем объекта, полный текст, адресаты, вложения | `crm.activity.list` (`TYPE_ID=4`, `PROVIDER_ID=CRM_EMAIL`), `crm.activity.get` |
+| **Файлы объекта** (Диск) | все файлы: поля «Файл» и «Файл (Диск)», вложения комментариев, писем и дел; чтение содержимого (PDF, DOCX, XLSX, PPTX, ODT, RTF, TXT, CSV, HTML, EML), чтение частями, кэш | `crm.item.get` (`urlMachine`), `disk.attachedObject.get`, `disk.file.get` → `DOWNLOAD_URL`, `crm.timeline.comment.list` (`FILES`) |
 | Таймлайн | чтение комментариев и дел; ответы комментарием; отслеживание объекта | `crm.timeline.comment.list/get/add`, `crm.activity.list` |
 | Задачи | поиск (мои, по объекту CRM, по фильтрам), карточка с чек-листом и привязками, создание с привязкой к CRM и смарт-процессу, изменение, смена статуса, комментарии | `tasks.task.*`, `task.commentitem.*` |
 | Сотрудники и оргструктура | поиск сотрудника и его ID, подразделения, состав подразделения, рабочие группы и проекты | `user.search`, `user.get`, `department.get`, `socialnetwork.api.workgroup.list` |
@@ -57,6 +59,21 @@
 
 Ответ публикуется комментарием с упоминанием автора. Автор комментария — **пользователь вебхука**: `crm.timeline.comment.add` не принимает автора. Поэтому вебхук создают от сервисной учётки, например «ИИ-агент».
 
+## Автопомощь по письмам и файлам
+
+`AUTO_ASSIST_TYPES=1038,deal` включает автопомощь. Раз в `AUTO_ASSIST_INTERVAL` секунд агент проходит по элементам этих типов с новой активностью (`lastActivityTime`) и ищет:
+- новые **входящие письма** (`AUTO_ASSIST_ON=email`);
+- новые **файлы в комментариях** таймлайна, кроме своих (`AUTO_ASSIST_ON=file`).
+
+По каждой находке агент запускается в режиме **только чтения**: инструменты изменения ему не передаются. Он читает письмо и вложения, сверяется с карточкой объекта и готовит справку. Состав справки задаётся `AUTO_ASSIST_PROMPT_FILE`, по умолчанию это:
+- суть;
+- что просят: сроки, суммы, условия;
+- риски;
+- следующие шаги;
+- черновик ответа.
+
+Справка публикуется комментарием «ИИ-помощник» в таймлайне и/или личным сообщением ответственному от бота (`AUTO_ASSIST_TARGET=timeline,chat`). Она сохраняется в историю разговора таймлайна, поэтому можно сразу спросить «@ИИ-агент а что со штрафами?». Повторно одно и то же письмо или файл не обрабатывается. Лимит — `AUTO_ASSIST_MAX` справок за один проход.
+
 ## Как события доходят до агента
 
 | Источник | Режим | Нужен входящий доступ к агенту? |
@@ -79,12 +96,13 @@ b24agent/
   store.py       SQLite: история диалогов, привязки чатов, отслеживание таймлайна, курсоры, дедупликация
   tools/         ИНСТРУМЕНТЫ (основное место доработки)
     base.py      Tool, ToolContext, Toolbox (реестр, декоратор, выполнение, кэш полей, стадий, имён)
-    crm.py  tasks.py  users.py  org.py  processes.py  generic.py  chat.py
+    crm.py  documents.py  tasks.py  users.py  org.py  processes.py  generic.py  chat.py
     __init__.py  build_toolbox(): встроенные модули и плагины (TOOL_PLUGINS, PLUGINS_DIR)
   llm.py         клиент OpenAI-совместимого API (LiteLLM), вырезание <think>
   agent.py       системный промпт и цикл tool-calling: нативный / <tool_call> Qwen / JSON-протокол
   imbot.py       чат-бот: ImBotV2 (fetch/webhook) и ImBotV1 (push)
   bot.py         BotService: разбор событий v1/v2, личные и групповые чаты, таймлайн, fetch и сканеры
+  files.py       скачивание файлов портала (DOWNLOAD_URL / urlMachine) и извлечение текста
   formatting.py  Markdown ↔ BB-коды, упоминания [USER=id]
   web.py         aiohttp: /bitrix/events (push), /health
   mcp_server.py  MCP stdio: те же инструменты (кроме bot_only)

@@ -38,6 +38,10 @@ def _float(name: str, default: float) -> float:
     return float(raw) if raw and raw.strip() else default
 
 
+def _read(path: str) -> str:
+    return Path(path).read_text(encoding='utf-8') if path else ''
+
+
 def _list(name: str) -> tuple[str, ...]:
     raw = os.getenv(name) or ''
     return tuple(x.strip() for x in raw.replace(';', ',').split(',') if x.strip())
@@ -99,6 +103,17 @@ class Settings:
     timeline_scan_types: tuple[str, ...] = ()  # например ('deal', '1038')
     timeline_scan_interval: int = 60
     timeline_mention_ids: frozenset[int] = frozenset()  # кроме бота: ID сервисного пользователя вебхука
+
+    # --- Письма и файлы ---
+    files_max_mb: int = 25
+    file_read_chars: int = 12000
+    # Автопомощь: по новым письмам/файлам у элементов этих типов агент сам готовит справку
+    auto_assist_types: tuple[str, ...] = ()
+    auto_assist_on: frozenset[str] = frozenset({'email', 'file'})  # email | file
+    auto_assist_target: frozenset[str] = frozenset({'timeline'})  # timeline | chat (ответственному в личку)
+    auto_assist_interval: int = 120
+    auto_assist_max: int = 10  # не больше N справок за один проход
+    auto_assist_prompt: str = ''
 
     # --- Инструменты и расширения ---
     tools_disabled: frozenset[str] = frozenset()
@@ -184,6 +199,14 @@ def load_settings(env_file: str | None = None) -> Settings:
         timeline_scan_types=_list('TIMELINE_SCAN_TYPES'),
         timeline_scan_interval=_int('TIMELINE_SCAN_INTERVAL', 60),
         timeline_mention_ids=_ids('TIMELINE_MENTION_IDS'),
+        files_max_mb=_int('FILES_MAX_MB', 25),
+        file_read_chars=_int('FILE_READ_CHARS', 12000),
+        auto_assist_types=_list('AUTO_ASSIST_TYPES'),
+        auto_assist_on=frozenset(x.lower() for x in (_list('AUTO_ASSIST_ON') or ('email', 'file'))),
+        auto_assist_target=frozenset(x.lower() for x in (_list('AUTO_ASSIST_TARGET') or ('timeline',))),
+        auto_assist_interval=_int('AUTO_ASSIST_INTERVAL', 120),
+        auto_assist_max=_int('AUTO_ASSIST_MAX', 10),
+        auto_assist_prompt=_read(os.getenv('AUTO_ASSIST_PROMPT_FILE') or ''),
         tools_disabled=frozenset(_list('TOOLS_DISABLED')),
         plugins=_list('TOOL_PLUGINS'),
         plugins_dir=Path(os.getenv('PLUGINS_DIR') or 'plugins'),

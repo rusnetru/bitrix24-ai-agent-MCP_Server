@@ -41,6 +41,7 @@ BUILTIN_MODULES = (
     'b24agent.tools.users',
     'b24agent.tools.org',
     'b24agent.tools.processes',
+    'b24agent.tools.documents',
     'b24agent.tools.generic',
     'b24agent.tools.chat',
 )

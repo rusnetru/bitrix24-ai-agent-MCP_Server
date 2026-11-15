@@ -104,6 +104,8 @@ BITRIX_CALL_DENY=crm.*.delete
 | Хранение (Postgres вместо SQLite) | `store.py`: интерфейс из простых асинхронных методов |
 | HTTP-эндпоинты (например, вызов из БП через «Исходящий вебхук» робота) | `web.py` |
 | MCP по сети (Streamable HTTP) | `mcp_server.py`: обёртка для `mcp.server.streamable_http` вместо stdio |
+| Новые форматы файлов, OCR сканов, vision-модель для картинок | `files.py` (`extract_text`); или плагин, переопределяющий `file_read` |
+| Что готовит автопомощь | `AUTO_ASSIST_PROMPT_FILE`; логика поиска новых писем и файлов — `BotService.assist_loop` |
 | Типы CRM, префиксы, ссылки | `entities.py` (`STANDARD`, `ALIASES`, `EntityType.url`) |
 
 ## Соглашения

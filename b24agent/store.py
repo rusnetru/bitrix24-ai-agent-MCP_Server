@@ -26,6 +26,7 @@ create table if not exists timeline_watch (
     primary key (entity_type_id, entity_id)
 );
 create table if not exists processed (key text primary key, ts real not null);
+create table if not exists file_text (ref text primary key, name text, size integer, text text not null, ts real not null);
 """
 
 
@@ -130,3 +131,12 @@ class Store:
         if hash(key) % 200 == 0:
             await self._run('delete from processed where ts < ?', (time.time() - 7 * 86400,))
         return True
+
+    # --- кэш извлечённого текста файлов ---
+    async def file_text(self, ref: str) -> tuple[str, str] | None:
+        row = await self._run('select name, text from file_text where ref=?', (ref,), 'one')
+        return (row[0], row[1]) if row else None
+
+    async def save_file_text(self, ref: str, name: str, size: int | None, text: str) -> None:
+        await self._run('insert or replace into file_text values (?, ?, ?, ?, ?)',
+                        (ref, name, size, text, time.time()))

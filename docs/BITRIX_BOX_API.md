@@ -319,6 +319,12 @@
 
 ## 9. Диск и файлы
 
+- ✅ **Реализовано** (`crm_files`, `file_read`, `crm_email_read`):
+  - комментарии: ключ `FILES` → `disk.file.get` → `DOWNLOAD_URL`;
+  - поля «Файл»: `urlMachine`;
+  - поля «Файл (Диск)»: `disk.attachedObject.get` → `DOWNLOAD_URL`;
+  - вложения дел и писем: `FILES[].id` → `disk.file.get`, при ошибке — `attachedObject`.
+- **Письма CRM** — дела с `PROVIDER_ID=CRM_EMAIL`, `TYPE_ID=4`; `DIRECTION` 1 — входящее, 2 — исходящее. Тело письма лежит в `DESCRIPTION` (HTML при `DESCRIPTION_TYPE=3`). В `crm.activity.list` поля `COMMUNICATIONS` и `FILES` возвращаются, только если указаны в `select`. В REST 3.0 есть `crm.activity.mail.getContent` / `getThread`; их имена пишутся с заглавными буквами, на коробке проверяйте через `method.get`.
 - **🟡 Диск:** `disk.storage.getList`, `disk.folder.getChildren`, `disk.folder.uploadFile {id, data{NAME}, fileContent:[имя, base64], generateUniqueName}`, `disk.file.get` → `DOWNLOAD_URL`.
 - **Скачивание через вебхук:** взять `DOWNLOAD_URL` из `disk.file.get` и сделать GET с `Referer: https://портал/`. Ссылки бывают одноразовыми и с ограниченным сроком.
   - ⚠ `DETAIL_URL`, `urlDownload` открываются только в браузерной сессии и вернут HTML.
@@ -378,7 +384,9 @@
 | высокий | Суммаризация звонков и писем по сделке | `crm.activity.list` + `crm.activity.call.getTranscript` + `crm.activity.mail.getContent` |
 | высокий | Найти штатный чат объекта и добавить в него бота | `im.chat.get {ENTITY_TYPE: CRM, ENTITY_ID: DEAL\|id}` + `im.chat.user.add` |
 | высокий | Комментарии в новой карточке задачи (чат задачи) | `tasks.task.chat.message.send`, `im.dialog.messages.get` |
-| высокий | Чтение вложений (PDF, DOCX) | `disk.file.get` → `DOWNLOAD_URL`, `crm.item.get` → `urlMachine` |
+| ✅ сделано | Чтение вложений (PDF, DOCX, XLSX…) и писем, автопомощь | см. раздел 9 |
+| высокий | OCR сканов и vision для картинок | плагин к `file_read` (Tesseract или корпоративная vision-модель через LiteLLM) |
+| средний | Поиск по Диску (общие и групповые папки) | `disk.storage.getList`, `disk.folder.getChildren`, `disk.file.search` |
 | средний | Товары сделки | `crm.item.productrow.list/set`, `catalog.product.list` |
 | средний | Реквизиты компании (ИНН, банк) | `crm.requisite.list`, `crm.requisite.bankdetail.list` |
 | средний | Документ по шаблону (КП, договор) | `crm.documentgenerator.template.list`, `crm.documentgenerator.document.add` |

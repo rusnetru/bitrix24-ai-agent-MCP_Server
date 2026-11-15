@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
@@ -24,6 +24,7 @@ from b24agent.formatting import md_to_bb, mentions, strip_bb
 from b24agent.imbot import ImBotBase
 from b24agent.store import Store
 from b24agent.tools import BotContext, Toolbox, ToolContext
+from b24agent.tools.documents import list_emails
 
 log = logging.getLogger(__name__)
 
@@ -34,6 +35,15 @@ HELP = """Я ИИ-агент портала. Что я умею:
 • работать в контексте объекта: «привяжи этот чат к сделке 123», «создай чат по сделке 123»;
 • отвечать в таймлайне: упомяните меня в комментарии объекта или скажите «следи за таймлайном сделки 123».
 Команды: /help — справка, /clear — забыть историю этого диалога, /context — к какому объекту привязан чат."""
+
+
+DEFAULT_ASSIST = """Подготовь помощь ответственному сотруднику:
+1. Суть: о чём письмо или документ (3–5 пунктов).
+2. Что от нас хотят: запросы, сроки, суммы, условия.
+3. Риски и на что обратить внимание (сверь с данными объекта CRM, если нужно).
+4. Предлагаемые следующие шаги.
+5. Для входящего письма — черновик ответа.
+Ничего не изменяй в CRM — только подготовь справку. Пиши кратко и по делу."""
 
 
 @dataclass
@@ -255,6 +265,96 @@ class BotService:
                 except Exception:
                     log.exception('Сканирование таймлайна %s', et.title)
             await asyncio.sleep(interval)
+
+    async def assist_loop(self) -> None:
+        """Автопомощь: по новым входящим письмам и файлам у недавно активных элементов готовить справку."""
+        interval = self.s.auto_assist_interval
+        types = [await self.entities.get(t) for t in self.s.auto_assist_types]
+        log.info('Автопомощь (%s → %s): %s, каждые %s с', ', '.join(sorted(self.s.auto_assist_on)),
+                 ', '.join(sorted(self.s.auto_assist_target)), ', '.join(t.title for t in types), interval)
+        while True:
+            budget = self.s.auto_assist_max
+            for et in types:
+                key = f'assist_cursor_{et.id}'
+                try:
+                    cursor = await self.store.get(key)
+                    if not cursor:
+                        await self.store.set(key, await self.b24.call('server.time'))
+                        continue
+                    items, _ = await self.b24.list('crm.item.list', {
+                        'entityTypeId': et.id, 'filter': {'>=lastActivityTime': cursor},
+                        'select': ['id', 'title', 'assignedById', 'lastActivityTime'],
+                        'order': {'lastActivityTime': 'ASC'}}, limit=200, key='items')
+                    newest = cursor
+                    for it in items:
+                        if budget <= 0:
+                            break
+                        budget -= await self._assist_item(et, it, cursor)
+                        newest = max(newest, str(it.get('lastActivityTime') or newest), key=_ts)
+                    if newest != cursor:
+                        await self.store.set(key, newest)
+                except Exception:
+                    log.exception('Автопомощь: %s', et.title)
+            await asyncio.sleep(interval)
+
+    async def _assist_item(self, et: Any, item: dict, since: str) -> int:
+        item_id = int(item['id'])
+        since_ts = _ts(since)
+        jobs: list[tuple[str, str]] = []
+        ctx = self._ctx(None, None, f'tl:{et.id}:{item_id}')
+        if 'email' in self.s.auto_assist_on:
+            for e in await list_emails(ctx, et.id, item_id, 10, select=[
+                    'ID', 'SUBJECT', 'DIRECTION', 'CREATED', 'PROVIDER_ID', 'TYPE_ID']):
+                if str(e.get('DIRECTION')) == '1' and _ts(e.get('CREATED')) >= since_ts:
+                    jobs.append((f'assist:email:{e["ID"]}',
+                                 f'По объекту пришло новое входящее письмо «{e.get("SUBJECT") or ""}» '
+                                 f'(id {e["ID"]}). Прочитай его (crm_email_read) и важные вложения (file_read).'))
+        if 'file' in self.s.auto_assist_on:
+            rows, _ = await self.b24.list('crm.timeline.comment.list', {
+                'filter': {'ENTITY_ID': item_id, 'ENTITY_TYPE': et.timeline_type},
+                'select': ['ID', 'CREATED', 'AUTHOR_ID', 'FILES'], 'order': {'ID': 'DESC'}}, limit=20)
+            for c in rows:
+                if _ts(c.get('CREATED')) < since_ts or _int(c.get('AUTHOR_ID')) == self.b24.webhook_user_id:
+                    continue
+                files = c.get('FILES') or {}
+                for fid, f in (files.items() if isinstance(files, dict) else enumerate(files)):
+                    f = f if isinstance(f, dict) else {}
+                    fid = f.get('id') or fid
+                    jobs.append((f'assist:file:{fid}',
+                                 f'В таймлайн объекта добавлен файл «{f.get("name") or fid}» (ref disk:{fid}). '
+                                 'Прочитай его через file_read.'))
+        done = 0
+        for key, task in jobs:
+            if await self.store.mark_processed(key):
+                await self._assist(et, item, task)
+                done += 1
+        return done
+
+    async def _assist(self, et: Any, item: dict, task: str) -> None:
+        item_id = int(item['id'])
+        conv = f'tl:{et.id}:{item_id}'
+        ctx = ToolContext(b24=self.b24, entities=self.entities, settings=replace(self.s, allow_write=False),
+                          store=self.store, tb=self.toolbox)
+        lines = ['Канал: автоматическая справка для ответственного сотрудника (никто не спрашивал напрямую).',
+                 'Объект: ' + await self.toolbox.entity_summary(ctx, et.id, item_id)]
+        try:
+            answer = await self.agent.run(ctx, [], f'{task}\n\n{self.s.auto_assist_prompt or DEFAULT_ASSIST}', lines)
+        except Exception:
+            log.exception('Автопомощь: ошибка агента')
+            return
+        answer = answer.strip()
+        if not answer:
+            return
+        await self.store.add_history(conv, 'assistant', answer)  # чтобы вопросы в таймлайне видели справку
+        body = md_to_bb(answer)
+        if 'timeline' in self.s.auto_assist_target:
+            await self.b24.call('crm.timeline.comment.add', {'fields': {
+                'ENTITY_ID': item_id, 'ENTITY_TYPE': et.timeline_type, 'COMMENT': f'[b]ИИ-помощник[/b]\n{body}'}})
+        assigned = _int(item.get('assignedById'))
+        if 'chat' in self.s.auto_assist_target and assigned and self.imbot.bot_id:
+            url = et.url(self.s.portal_url, item_id)
+            await self.imbot.send(str(assigned), f'По объекту [url={url}]{et.title} «{item.get("title") or item_id}»'
+                                                 f'[/url]:\n{body}')
 
     async def _check_comments(self, etid: int, item_id: int, after_id: int = 0, created_since: str = '') -> None:
         et = await self.entities.get(etid)
