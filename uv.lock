@@ -221,7 +221,7 @@ wheels = [
 ]
 
 [[package]]
-name = "bitrix24-ai-agent"
+name = "bitrix24-ai-agent-mcp-server"
 version = "2.3.0"
 source = { editable = "." }
 dependencies = [

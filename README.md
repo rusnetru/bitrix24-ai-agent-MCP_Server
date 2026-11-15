@@ -1,4 +1,4 @@
-# b24agent — ИИ-сотрудник для коробочного Битрикс24
+# b24agent — ИИ-сотрудник и MCP Server для коробочного Битрикс24
 
 **b24agent** — сервис, который ставится внутри корпоративной сети рядом с **коробочным Битрикс24** и подключается к внутренней LLM (например, Qwen) через **LiteLLM**. Он понимает данные портала, общается с сотрудниками в чатах и таймлайне, читает переписку и документы и участвует в бизнес-процессах.
 
@@ -56,7 +56,7 @@
 3. **Сервер.** Нужна машина в контуре, которой доступны портал и LiteLLM, с Python 3.11+ или [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/rusnetru/bitrix24-ai-agent.git && cd bitrix24-ai-agent
+git clone https://github.com/rusnetru/bitrix24-ai-agent-MCP_Server.git && cd bitrix24-ai-agent-MCP_Server
 uv sync            # или: pip install -e .
 cp .env.example .env
 ```
@@ -162,7 +162,7 @@ uv run b24agent serve     # работа агента
   "mcpServers": {
     "bitrix24": {
       "command": "uv",
-      "args": ["--directory", "/path/to/bitrix24-ai-agent", "run", "b24agent", "mcp"]
+      "args": ["--directory", "/path/to/bitrix24-ai-agent-MCP_Server", "run", "b24agent", "mcp"]
     }
   }
 }
