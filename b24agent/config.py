@@ -84,6 +84,7 @@ class Settings:
     bot_token: str = ''  # секрет бота для imbot.v2 через вебхук (произвольная строка, до 40 символов)
     bot_type: str = 'bot'  # v2: bot (личка и @упоминания) | supervisor (все сообщения в своих чатах)
     bot_poll_interval: float = 3
+    bot_hidden: bool = False
 
     # --- HTTP-приёмник событий ---
     public_url: str = ''
@@ -124,6 +125,14 @@ class Settings:
     bp_max_per_cycle: int = 5
     bp_timeline_note: bool = True
     bp_extra_prompt: str = ''
+
+    # --- Личные ассистенты (права сотрудника) ---
+    personal_agents_file: str = 'personal_agents.toml'
+    # Личный чат с универсальным ботом: service — права агента; personal — если у сотрудника есть личный
+    # ассистент, то его права и память, иначе права агента; personal_only — без личного ассистента отказ
+    private_chat_mode: str = 'personal'
+    personal_memory_max: int = 50
+    personal_history: int = 40
 
     # --- Инструменты и расширения ---
     tools_disabled: frozenset[str] = frozenset()
@@ -225,6 +234,10 @@ def load_settings(env_file: str | None = None) -> Settings:
         bp_max_per_cycle=_int('BP_MAX_PER_CYCLE', 5),
         bp_timeline_note=_bool('BP_TIMELINE_NOTE', True),
         bp_extra_prompt=_read(os.getenv('BP_AGENT_PROMPT_FILE') or ''),
+        personal_agents_file=os.getenv('PERSONAL_AGENTS_FILE') or 'personal_agents.toml',
+        private_chat_mode=(os.getenv('PRIVATE_CHAT_MODE') or 'personal').lower(),
+        personal_memory_max=_int('PERSONAL_MEMORY_MAX', 50),
+        personal_history=_int('PERSONAL_HISTORY', 40),
         tools_disabled=frozenset(_list('TOOLS_DISABLED')),
         plugins=_list('TOOL_PLUGINS'),
         plugins_dir=Path(os.getenv('PLUGINS_DIR') or 'plugins'),

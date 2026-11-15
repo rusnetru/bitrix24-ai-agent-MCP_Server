@@ -61,6 +61,11 @@ class ToolContext:
     tb: Toolbox = None  # type: ignore[assignment]  # заполняется Toolbox.execute
     user_id: int | None = None  # ID сотрудника, от имени которого идёт запрос (None — MCP/консоль)
     bot: BotContext | None = None
+    profile: Any = None  # b24agent.profiles.AgentProfile: чей это агент (универсальный / личный ассистент)
+
+    @property
+    def personal(self) -> bool:
+        return bool(self.profile is not None and getattr(self.profile, 'personal', False))
 
 
 Handler = Callable[[ToolContext, dict], Awaitable[Any]]
@@ -74,6 +79,7 @@ class Tool:
     handler: Handler
     write: bool = False  # меняет данные — скрывается при AGENT_ALLOW_WRITE=false
     bot_only: bool = False  # нужен контекст разговора с ботом — не публикуется в MCP
+    personal_only: bool = False  # только у личного ассистента (например, личная память)
     group: str = ''  # модуль-источник (для документации и отладки)
     meta: dict = field(default_factory=dict)
 
@@ -138,31 +144,34 @@ class Toolbox:
 
     # --- регистрация
     def add(self, name: str, description: str, params: dict, handler: Handler, *,
-            write: bool = False, bot_only: bool = False, **meta: Any) -> None:
+            write: bool = False, bot_only: bool = False, personal_only: bool = False, **meta: Any) -> None:
         if name in self.tools:
             log.info('Инструмент %s переопределён (%s → %s)', name, self.tools[name].group, self._group)
-        self.tools[name] = Tool(name, description, params, handler, write, bot_only, self._group, meta)
+        self.tools[name] = Tool(name, description, params, handler, write, bot_only, personal_only,
+                                self._group, meta)
 
     def tool(self, name: str, description: str, params: dict | None = None, *,
-             write: bool = False, bot_only: bool = False, **meta: Any) -> Callable[[Handler], Handler]:
+             write: bool = False, bot_only: bool = False, personal_only: bool = False,
+             **meta: Any) -> Callable[[Handler], Handler]:
         """Декоратор для плагинов::
 
             @tb.tool('my_report', 'Описание для модели', schema({'days': {'type': 'integer'}}))
             async def my_report(ctx, args): ...
         """
         def deco(fn: Handler) -> Handler:
-            self.add(name, description, params or schema({}), fn, write=write, bot_only=bot_only, **meta)
+            self.add(name, description, params or schema({}), fn, write=write, bot_only=bot_only,
+                     personal_only=personal_only, **meta)
             return fn
         return deco
 
     def remove(self, name: str) -> None:
         self.tools.pop(name, None)
 
-    def available(self, settings: Settings, with_bot: bool) -> list[Tool]:
+    def available(self, settings: Settings, with_bot: bool, personal: bool = False) -> list[Tool]:
         return [
             t for t in self.tools.values()
             if (settings.allow_write or not t.write) and (with_bot or not t.bot_only)
-            and t.name not in settings.tools_disabled
+            and (personal or not t.personal_only) and t.name not in settings.tools_disabled
         ]
 
     async def execute(self, ctx: ToolContext, name: str, args: dict) -> str:
@@ -174,6 +183,8 @@ class Toolbox:
             return json.dumps({'error': 'Изменение данных отключено (AGENT_ALLOW_WRITE=false)'}, ensure_ascii=False)
         if tool.bot_only and ctx.bot is None:
             return json.dumps({'error': 'Инструмент доступен только из чата с ботом'}, ensure_ascii=False)
+        if tool.personal_only and not ctx.personal:
+            return json.dumps({'error': 'Инструмент доступен только личному ассистенту'}, ensure_ascii=False)
         try:
             result = await tool.handler(ctx, args or {})
         except BitrixError as exc:

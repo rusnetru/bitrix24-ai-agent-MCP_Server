@@ -13,9 +13,16 @@ from b24agent.app import App
 from b24agent.tools import ToolContext
 
 
-async def run_mcp(app: App) -> None:
-    server: Server = Server('bitrix24-box')
-    tools = app.toolbox.available(app.settings, with_bot=False)
+async def run_mcp(app: App, as_user: int | None = None) -> None:
+    """as_user — работать как личный ассистент сотрудника (его вебхук, его права, его память)."""
+    profile = app.profiles.service
+    if as_user:
+        profile = app.profiles.for_user(as_user)
+        if profile is None:
+            msg = f'Для пользователя {as_user} нет рабочего личного ассистента (см. b24agent personal)'
+            raise SystemExit(msg)
+    server: Server = Server('bitrix24-box' if not profile.personal else f'bitrix24-personal-{as_user}')
+    tools = app.toolbox.available(profile.settings, with_bot=False, personal=profile.personal and profile.memory)
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
@@ -23,8 +30,8 @@ async def run_mcp(app: App) -> None:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent]:
-        ctx = ToolContext(b24=app.b24, entities=app.entities, settings=app.settings, store=app.store,
-                          tb=app.toolbox)
+        ctx = ToolContext(b24=profile.b24, entities=app.entities, settings=profile.settings, store=app.store,
+                          tb=app.toolbox, user_id=profile.user_id, profile=profile)
         result = await app.toolbox.execute(ctx, name, arguments or {})
         return [types.TextContent(type='text', text=result)]
 

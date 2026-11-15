@@ -44,6 +44,7 @@ BUILTIN_MODULES = (
     'b24agent.tools.documents',
     'b24agent.tools.generic',
     'b24agent.tools.chat',
+    'b24agent.tools.memory',
 )
 
 __all__ = [

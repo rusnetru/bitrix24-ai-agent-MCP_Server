@@ -1,0 +1,24 @@
+# Личные ассистенты сотрудников: работают С ПРАВАМИ СОТРУДНИКА через его собственный вебхук.
+# Скопируйте в personal_agents.toml (он в .gitignore) — подробности в docs/RIGHTS_AND_AGENTS.md.
+#
+# Вебхук создаёт САМ сотрудник (Разработчикам → Другое → Входящий вебхук; права:
+# crm, task, user, im, department, sonet_group, calendar, bizproc, lists, disk) и передаёт
+# администратору защищённым способом. URL храните в переменной окружения (webhook_env).
+
+[[agent]]
+user_id = 15                          # ID сотрудника в Битрикс24 (должен совпадать с владельцем вебхука)
+name = "Ассистент Анны"               # как ассистент представляется
+webhook_env = "PA_15_WEBHOOK"         # имя переменной окружения с URL вебхука (или webhook = "https://...")
+own_bot = false                       # true — отдельный скрытый бот только для этого сотрудника
+allow_write = true                    # false — ассистент только читает
+memory = true                         # личная память о сотруднике (/memory, /forget)
+prompt = "Обращайся на «ты». Отвечай кратко, списком. Суммы — в тысячах рублей."
+# prompt_file = "prompts/anna.md"     # или инструкции из файла
+tools_disabled = ["bp_start"]         # дополнительно отключённые инструменты
+
+# [[agent]]
+# user_id = 27
+# name = "Ассистент директора"
+# webhook_env = "PA_27_WEBHOOK"
+# own_bot = true
+# allow_write = false

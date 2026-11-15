@@ -22,6 +22,7 @@ from b24agent.config import Settings
 from b24agent.entities import EntityRegistry
 from b24agent.formatting import md_to_bb, mentions, strip_bb
 from b24agent.imbot import ImBotBase
+from b24agent.profiles import AgentProfile, ProfileRegistry
 from b24agent.store import Store
 from b24agent.tools import BotContext, Toolbox, ToolContext
 from b24agent.tools.documents import list_emails
@@ -34,7 +35,8 @@ HELP = """Я ИИ-агент портала. Что я умею:
 • работать с задачами, календарём, согласованиями бизнес-процессов, универсальными списками;
 • работать в контексте объекта: «привяжи этот чат к сделке 123», «создай чат по сделке 123»;
 • отвечать в таймлайне: упомяните меня в комментарии объекта или скажите «следи за таймлайном сделки 123».
-Команды: /help — справка, /clear — забыть историю этого диалога, /context — к какому объекту привязан чат."""
+Команды: /help — справка, /clear — забыть историю этого диалога, /context — к какому объекту привязан чат,
+/whoami — с чьими правами я работаю, /memory — что я о вас помню (личный ассистент), /forget — забыть всё."""
 
 
 DEFAULT_ASSIST = """Подготовь помощь ответственному сотруднику:
@@ -118,8 +120,12 @@ def parse_v2(data: dict) -> Incoming | None:
 
 class BotService:
     def __init__(self, b24: Bitrix, settings: Settings, store: Store, entities: EntityRegistry,
-                 toolbox: Toolbox, agent: Agent, imbot: ImBotBase):
+                 toolbox: Toolbox, agent: Agent, imbot: ImBotBase,
+                 profiles: ProfileRegistry | None = None, fixed_profile: AgentProfile | None = None):
         self.b24 = b24
+        self.profiles = profiles or ProfileRegistry(service=AgentProfile(
+            key='service', kind='service', b24=b24, settings=settings, name=settings.bot_name))
+        self.fixed_profile = fixed_profile  # личный бот: всегда работает как этот профиль
         self.s = settings
         self.store = store
         self.entities = entities
@@ -187,7 +193,27 @@ class BotService:
         return bot_id is None or bot_id == self.imbot.bot_id
 
     def _allowed(self, user_id: int | None) -> bool:
-        return not self.s.allowed_users or (user_id in self.s.allowed_users)
+        return (not self.s.allowed_users or user_id in self.s.allowed_users
+                or self.profiles.for_user(user_id) is not None)
+
+    def resolve_profile(self, msg: Incoming) -> tuple[AgentProfile | None, str]:
+        """Чей агент отвечает на сообщение: (профиль, текст отказа)."""
+        if self.fixed_profile is not None:
+            if msg.user_id != self.fixed_profile.user_id:
+                return None, f'Это личный ассистент другого сотрудника. Обратитесь к «{self.s.bot_name}».'
+            return self.fixed_profile, ''
+        if not msg.private:
+            return self.profiles.service, ''  # групповые чаты и чаты объектов — универсальный агент
+        mode = self.s.private_chat_mode
+        personal = self.profiles.for_user(msg.user_id)
+        if mode == 'service':
+            return self.profiles.service, ''
+        if personal:
+            return personal, ''
+        if mode == 'personal_only':
+            return None, ('Для вас ещё не настроен личный ассистент, работающий с вашими правами. '
+                          'Обратитесь к администратору портала.')
+        return self.profiles.service, ''
 
     def mention_ids(self) -> set[int]:
         """Кого считать «упоминанием агента» в таймлайне: бот, пользователь вебхука, TIMELINE_MENTION_IDS."""
@@ -201,7 +227,8 @@ class BotService:
     # ---------------------------------------------------------------- источники событий
     async def fetch_loop(self) -> None:
         """imbot.v2 fetch: забирать события бота без входящего доступа к агенту."""
-        offset = int(await self.store.get('v2_event_offset', 0) or 0)
+        offset_key = f'v2_event_offset{getattr(self.imbot, "key", "")}'
+        offset = int(await self.store.get(offset_key, 0) or 0)
         log.info('imbot.v2 fetch: опрос событий бота %s каждые %s с', self.imbot.bot_id, self.s.bot_poll_interval)
         while True:
             try:
@@ -219,7 +246,7 @@ class BotService:
             nxt = res.get('nextOffset')
             if nxt and int(nxt) != offset:
                 offset = int(nxt)  # подтверждение получения произойдёт следующим вызовом с этим offset
-                await self.store.set('v2_event_offset', offset)
+                await self.store.set(offset_key, offset)
             await asyncio.sleep(0.5 if res.get('hasMore') else self.s.bot_poll_interval)
 
     async def poll_watched(self) -> None:
@@ -395,8 +422,22 @@ class BotService:
             await self.imbot.send(dialog_id, 'У вас нет доступа к ИИ-агенту. Обратитесь к администратору портала.')
             return
 
-        conv = f'im:{dialog_id}'
+        profile, refusal = self.resolve_profile(msg)
+        if profile is None:
+            await self.imbot.send(dialog_id, refusal)
+            return
+        conv = f'pa:{profile.user_id}' if profile.personal else f'im:{dialog_id}'
         cmd = text.strip().lower()
+        if cmd == '/whoami':
+            await self.imbot.send(dialog_id, self._whoami(profile))
+            return
+        if cmd in {'/memory', '/память'}:
+            await self.imbot.send(dialog_id, await self._memory_text(profile))
+            return
+        if cmd in {'/forget', '/забудь'} and profile.personal:
+            n = await self.store.forget_memory(profile.user_id)
+            await self.imbot.send(dialog_id, f'Готово, личная память очищена ({n} заметок).')
+            return
         if cmd in {'/help', 'помощь', '/start'}:
             await self.imbot.send(dialog_id, HELP)
             return
@@ -408,7 +449,7 @@ class BotService:
         bound = await self._binding(msg)
         if cmd == '/context':
             if bound:
-                ctx = self._ctx(msg.user_id, dialog_id, conv, bound)
+                ctx = self._ctx(msg.user_id, dialog_id, conv, bound, profile)
                 await self.imbot.send(dialog_id, md_to_bb(await self.toolbox.entity_summary(ctx, *bound)))
             else:
                 await self.imbot.send(dialog_id, 'Чат не привязан к объекту CRM.')
@@ -417,7 +458,7 @@ class BotService:
         sender = msg.user_name or await self.toolbox.user_name(self._ctx(msg.user_id, None, conv), msg.user_id)
         async with self._locks[conv]:
             await self.imbot.typing(dialog_id)
-            ctx = self._ctx(msg.user_id, dialog_id, conv, bound)
+            ctx = self._ctx(msg.user_id, dialog_id, conv, bound, profile)
             lines = ['Канал: ' + ('личный чат с пользователем' if msg.private else 'групповой чат')
                      + f' (DIALOG_ID {dialog_id}).']
             if bound:
@@ -491,15 +532,35 @@ class BotService:
                 await self.store.set_watch_cursor(et.id, item_id, int(new_id))
 
     # ---------------------------------------------------------------- common
+    def _whoami(self, p: AgentProfile) -> str:
+        if p.personal:
+            mem = 'веду' if p.memory else 'не веду'
+            return (f'Я {p.name} — ваш личный ассистент. Работаю с ВАШИМИ правами в Битрикс24: вижу только то, '
+                    f'что видите вы, и действую от вашего имени. Личную память о вас {mem} (/memory).')
+        return (f'Я {self.s.bot_name} — универсальный агент. Работаю со своими правами (сервисная учётка), '
+                'а не с вашими; мои действия записываются от имени агента.')
+
+    async def _memory_text(self, p: AgentProfile) -> str:
+        if not p.personal or not p.memory:
+            return 'Личная память есть только у личного ассистента.'
+        notes = await self.store.memories(p.user_id)
+        if not notes:
+            return 'Я пока ничего о вас не запомнил. Расскажите, как вам удобно работать, — я запомню.'
+        return 'Что я о вас помню:\n' + '\n'.join(f'[{i}] {f"{t}: " if t else ""}{x}' for i, t, x in notes) + \
+            '\n\nЗабыть заметку: «забудь [номер]», всё — /forget.'
+
     def _ctx(self, user_id: int | None, dialog_id: str | None, conv: str,
-             bound: tuple[int, int] | None = None) -> ToolContext:
+             bound: tuple[int, int] | None = None, profile: AgentProfile | None = None) -> ToolContext:
+        p = profile or self.profiles.service
         return ToolContext(
-            b24=self.b24, entities=self.entities, settings=self.s, store=self.store, tb=self.toolbox,
+            b24=p.b24, entities=self.entities, settings=p.settings, store=self.store, tb=self.toolbox,
             user_id=user_id, bot=BotContext(imbot=self.imbot, dialog_id=dialog_id, conv=conv, bound=bound),
+            profile=p,
         )
 
     async def _ask(self, ctx: ToolContext, conv: str, user_text: str, lines: list[str]) -> str:
-        history = await self.store.history(conv, self.s.history_limit)
+        limit = self.s.personal_history if ctx.personal else self.s.history_limit
+        history = await self.store.history(conv, limit)
         try:
             answer = await self.agent.run(ctx, history, user_text, lines)
         except Exception as exc:

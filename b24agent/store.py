@@ -26,6 +26,9 @@ create table if not exists timeline_watch (
     primary key (entity_type_id, entity_id)
 );
 create table if not exists processed (key text primary key, ts real not null);
+create table if not exists user_memory (
+    id integer primary key autoincrement, user_id integer not null, topic text, text text not null, ts real not null
+);
 create table if not exists file_text (ref text primary key, name text, size integer, text text not null, ts real not null);
 """
 
@@ -140,3 +143,22 @@ class Store:
     async def save_file_text(self, ref: str, name: str, size: int | None, text: str) -> None:
         await self._run('insert or replace into file_text values (?, ?, ?, ?, ?)',
                         (ref, name, size, text, time.time()))
+
+    # --- личная память ассистента ---
+    async def memories(self, user_id: int) -> list[tuple[int, str, str]]:
+        return await self._run('select id, coalesce(topic, \'\'), text from user_memory where user_id=? order by id',
+                               (user_id,), 'all')
+
+    async def add_memory(self, user_id: int, topic: str, text: str, limit: int) -> int:
+        await self._run('insert into user_memory(user_id, topic, text, ts) values (?, ?, ?, ?)',
+                        (user_id, topic, text, time.time()))
+        await self._run('delete from user_memory where user_id=? and id not in '
+                        '(select id from user_memory where user_id=? order by id desc limit ?)',
+                        (user_id, user_id, limit))
+        row = await self._run('select max(id) from user_memory where user_id=?', (user_id,), 'one')
+        return int(row[0])
+
+    async def forget_memory(self, user_id: int, memory_id: int | None = None) -> int:
+        if memory_id is None:
+            return await self._run('delete from user_memory where user_id=?', (user_id,))
+        return await self._run('delete from user_memory where user_id=? and id=?', (user_id, memory_id))

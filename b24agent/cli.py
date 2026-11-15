@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import sys
+from dataclasses import replace
 
 from aiohttp import web
 
@@ -16,8 +17,9 @@ from b24agent.bitrix import BitrixError
 from b24agent.bot import BotService
 from b24agent.bp_participant import BPParticipant
 from b24agent.config import Settings, load_settings
-from b24agent.imbot import make_imbot
+from b24agent.imbot import ImBotV2, make_imbot
 from b24agent.llm import LLM
+from b24agent.profiles import AgentProfile, verify
 from b24agent.tools import ToolContext
 from b24agent.web import create_app
 
@@ -119,7 +121,45 @@ async def cmd_setup(app: App) -> int:
     if s.public_url:
         print('  • исходящий вебхук (Разработчикам → Другое → Исходящий вебхук) на ONCRMTIMELINECOMMENTADD,')
         print(f'    URL {s.events_url} — только если портал может достучаться до агента.')
+    for p in app.profiles.personal.values():
+        await verify(p)
+        if not p.ok:
+            print(f'✘ Личный ассистент пользователя {p.user_id}: {p.problem}')
+            continue
+        if p.own_bot and s.bot_api == 'v2':
+            pbot = _personal_imbot(app, p)
+            pid = await pbot.register()
+            print(f'✔ Личный бот «{p.name}» для пользователя {p.user_id}: ID {pid} (скрытый, отвечает только владельцу)')
+            if not await app.store.get(f'pa_greeted_{p.user_id}'):
+                await pbot.send(str(p.user_id), f'Здравствуйте! Я {p.name} — ваш личный ассистент. Работаю с вашими '
+                                                'правами в Битрикс24 и запоминаю, как вам удобно работать. '
+                                                'Напишите /help.')
+                await app.store.set(f'pa_greeted_{p.user_id}', True)
+        else:
+            print(f'✔ Личный ассистент пользователя {p.user_id} «{p.name}»: в личном чате с «{s.bot_name}»')
     return 0
+
+
+def _personal_imbot(app: App, p: AgentProfile) -> ImBotV2:
+    s = replace(app.settings, bot_code=f'{app.settings.bot_code}_u{p.user_id}', bot_name=p.name, bot_last_name='',
+                bot_work_position='Личный ИИ-ассистент', bot_hidden=True, bot_type='bot', bot_event_mode='fetch',
+                bot_token='')
+    return ImBotV2(app.b24, s, app.store, key=f'_u{p.user_id}')
+
+
+async def cmd_personal(app: App) -> int:
+    s = app.settings
+    print(f'Файл личных ассистентов: {s.personal_agents_file}; режим личного чата: {s.private_chat_mode}')
+    if not app.profiles.personal:
+        print('  Личных ассистентов нет (см. personal_agents.example.toml и docs/RIGHTS_AND_AGENTS.md)')
+    for p in app.profiles.personal.values():
+        await verify(p)
+        notes = len(await app.store.memories(p.user_id))
+        state = '✔' if p.ok else '✘'
+        where = 'свой скрытый бот' if p.own_bot else f'личный чат с «{s.bot_name}»'
+        print(f'  {state} {p.user_id} «{p.name}»: {where}; запись: {"да" if p.settings.allow_write else "нет"}; '
+              f'память: {notes if p.memory else "выкл."}' + (f' — {p.problem}' if not p.ok else ''))
+    return 0 if all(p.ok for p in app.profiles.personal.values()) else 1
 
 
 async def cmd_unregister(app: App) -> int:
@@ -133,7 +173,8 @@ async def cmd_unregister(app: App) -> int:
 def _bot_service(app: App) -> BotService:
     imbot = make_imbot(app.b24, app.settings, app.store)
     agent = Agent(LLM(app.settings), app.toolbox)
-    return BotService(app.b24, app.settings, app.store, app.entities, app.toolbox, agent, imbot)
+    return BotService(app.b24, app.settings, app.store, app.entities, app.toolbox, agent, imbot,
+                      profiles=app.profiles)
 
 
 async def cmd_serve(app: App) -> int:
@@ -157,6 +198,20 @@ async def cmd_serve(app: App) -> int:
     if s.bp_agent:
         bp = BPParticipant(app.b24, s, app.store, app.entities, app.toolbox, bot.agent, bot.imbot)
         tasks.append(asyncio.create_task(bp.loop()))
+    for p in app.profiles.personal.values():
+        await verify(p)
+        if not p.ok:
+            log.warning('Личный ассистент пользователя %s отключён: %s', p.user_id, p.problem)
+            continue
+        if p.own_bot and s.bot_api == 'v2':
+            pbot = _personal_imbot(app, p)
+            if not await pbot.load():
+                log.warning('Личный бот пользователя %s не зарегистрирован — выполните b24agent setup', p.user_id)
+                continue
+            pservice = BotService(app.b24, pbot.s, app.store, app.entities, app.toolbox, bot.agent, pbot,
+                                  profiles=app.profiles, fixed_profile=p)
+            tasks.append(asyncio.create_task(pservice.fetch_loop()))
+    log.info('Личных ассистентов активно: %s', sum(p.ok for p in app.profiles.personal.values()))
     try:
         await asyncio.Event().wait()
     finally:
@@ -186,12 +241,19 @@ async def cmd_tools(app: App, as_json: bool) -> int:
     return 0
 
 
-async def cmd_ask(app: App, text: str, user_id: int | None) -> int:
-    """Проверка агента из консоли, без мессенджера."""
+async def cmd_ask(app: App, text: str, user_id: int | None, as_user: int | None = None) -> int:
+    """Проверка агента из консоли, без мессенджера. as_user — от лица личного ассистента сотрудника."""
     bot = _bot_service(app)
     await bot.imbot.load()
-    ctx = ToolContext(b24=app.b24, entities=app.entities, settings=app.settings, store=app.store,
-                      tb=app.toolbox, user_id=user_id)
+    profile = app.profiles.service
+    if as_user:
+        found = app.profiles.personal.get(as_user)
+        if not found or not (await verify(found)).ok:
+            print(f'Нет рабочего личного ассистента для {as_user}: {found.problem if found else "не описан"}')
+            return 1
+        profile, user_id = found, as_user
+    ctx = ToolContext(b24=profile.b24, entities=app.entities, settings=profile.settings, store=app.store,
+                      tb=app.toolbox, user_id=user_id, profile=profile)
     try:
         print(await bot.agent.run(ctx, [], text, ['Канал: консоль администратора (тест).']))
     finally:
@@ -211,12 +273,14 @@ async def _main(args: argparse.Namespace, settings: Settings) -> int:
         if args.cmd == 'serve':
             return await cmd_serve(app)
         if args.cmd == 'ask':
-            return await cmd_ask(app, ' '.join(args.text), args.user)
+            return await cmd_ask(app, ' '.join(args.text), args.user, args.as_user)
+        if args.cmd == 'personal':
+            return await cmd_personal(app)
         if args.cmd == 'tools':
             return await cmd_tools(app, args.json)
         if args.cmd == 'mcp':
             from b24agent.mcp_server import run_mcp
-            await run_mcp(app)
+            await run_mcp(app, args.as_user)
             return 0
     finally:
         await app.close()
@@ -230,13 +294,16 @@ def main() -> None:
     sub.add_parser('check', help='проверить доступ к порталу и LLM')
     sub.add_parser('setup', help='зарегистрировать/обновить чат-бота и подписаться на события')
     sub.add_parser('serve', help='запустить приём событий (чат-бот + таймлайн)')
-    sub.add_parser('mcp', help='MCP-сервер по stdio')
+    mcp = sub.add_parser('mcp', help='MCP-сервер по stdio')
+    mcp.add_argument('--as', dest='as_user', type=int, help='как личный ассистент сотрудника (его права и память)')
+    sub.add_parser('personal', help='проверить личных ассистентов (вебхуки, владельцы, память)')
     sub.add_parser('unregister', help='удалить чат-бота из портала')
     tools = sub.add_parser('tools', help='список инструментов (встроенные + плагины)')
     tools.add_argument('--json', action='store_true', help='полное описание со схемами параметров')
     ask = sub.add_parser('ask', help='задать вопрос агенту из консоли')
     ask.add_argument('text', nargs='+')
     ask.add_argument('--user', type=int, help='ID пользователя, от имени которого спрашиваем')
+    ask.add_argument('--as', dest='as_user', type=int, help='спросить личного ассистента этого сотрудника')
     args = parser.parse_args()
 
     settings = load_settings(args.env)

@@ -43,21 +43,23 @@ class ImBotBase:
     api = ''
     supports_fetch = False
 
-    def __init__(self, b24: Bitrix, settings: Settings, store: Store):
+    def __init__(self, b24: Bitrix, settings: Settings, store: Store, key: str = ''):
         self.b24 = b24
         self.s = settings
         self.store = store
+        self.key = key  # '' — универсальный бот; '_u15' — личный бот сотрудника 15
         self.bot_id: int | None = None
 
     async def load(self) -> int | None:
-        self.bot_id = await self.store.get(f'bot_id_{self.api}')
-        if self.bot_id is None and self.api == 'v1':  # совместимость с данными версии 2.0.0
+        self.bot_id = await self.store.get(f'bot_id_{self.api}{self.key}')
+        if self.bot_id is None and self.api == 'v1' and not self.key:  # совместимость с данными 2.0.0
             self.bot_id = await self.store.get('bot_id')
         return self.bot_id
 
     async def _save(self) -> None:
-        await self.store.set(f'bot_id_{self.api}', self.bot_id)
-        await self.store.set('bot_id', self.bot_id)
+        await self.store.set(f'bot_id_{self.api}{self.key}', self.bot_id)
+        if not self.key:
+            await self.store.set('bot_id', self.bot_id)
 
     # интерфейс
     async def register(self) -> int: raise NotImplementedError
@@ -79,12 +81,12 @@ class ImBotV2(ImBotBase):
         return self.s.bot_event_mode == 'fetch'
 
     async def token(self) -> str:
-        if self.s.bot_token:
+        if self.s.bot_token and not self.key:
             return self.s.bot_token
-        tok = await self.store.get('bot_token_v2')
+        tok = await self.store.get(f'bot_token_v2{self.key}')
         if not tok:
             tok = secrets.token_urlsafe(24)
-            await self.store.set('bot_token_v2', tok)
+            await self.store.set(f'bot_token_v2{self.key}', tok)
         return tok
 
     async def call(self, method: str, params: dict | None = None, *, with_bot: bool = True) -> Any:
@@ -99,6 +101,7 @@ class ImBotV2(ImBotBase):
                            'workPosition': self.s.bot_work_position},
             'eventMode': self.s.bot_event_mode,
             'isSupportOpenline': self.s.bot_openline,
+            'isHidden': self.s.bot_hidden,
         }
         if self.s.bot_event_mode == 'webhook':
             if not self.s.public_url:
