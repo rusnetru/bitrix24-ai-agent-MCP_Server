@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import ssl
 from typing import Any
 
@@ -35,6 +36,10 @@ class Bitrix:
 
     def __init__(self, webhook_url: str, verify_ssl: bool | str = True, timeout: float = 60):
         self.base = webhook_url.rstrip('/') + '/'
+        # REST 3.0: https://host/rest/api/{user}/{code}/{method} (только POST + JSON)
+        self.base_v3 = re.sub(r'/rest/(?!api/)', '/rest/api/', self.base, count=1)
+        m = re.search(r'/rest/(?:api/)?(\d+)/', self.base)
+        self.webhook_user_id = int(m.group(1)) if m else None
         self._ssl = make_ssl(verify_ssl)
         self._timeout = aiohttp.ClientTimeout(total=timeout)
         self._session: aiohttp.ClientSession | None = None
@@ -48,10 +53,10 @@ class Bitrix:
         if self._session and not self._session.closed:
             await self._session.close()
 
-    async def raw(self, method: str, params: dict | None = None) -> dict:
-        """Вызов метода; возвращает весь ответ (result, next, total)."""
+    async def raw(self, method: str, params: dict | None = None, *, v3: bool = False) -> dict:
+        """Вызов метода; возвращает весь ответ (result, next, total). ``v3=True`` — REST 3.0."""
         session = await self._get_session()
-        url = f'{self.base}{method}.json'
+        url = f'{self.base_v3}{method}' if v3 else f'{self.base}{method}.json'
         for attempt in range(5):
             try:
                 async with session.post(url, json=params or {}, ssl=self._ssl) as resp:
@@ -66,16 +71,30 @@ class Bitrix:
                 await asyncio.sleep(1 + attempt)
                 continue
             if isinstance(data, dict) and 'error' in data:
-                code = str(data.get('error'))
+                err = data.get('error')
+                if isinstance(err, dict):  # формат ошибок REST 3.0
+                    code, desc = str(err.get('code')), str(err.get('message', ''))
+                    if err.get('validation'):
+                        desc += f' {err["validation"]}'
+                else:
+                    code, desc = str(err), str(data.get('error_description', ''))
                 if code in _RETRY_ERRORS and attempt < 4:
                     await asyncio.sleep(1 + attempt * 2)
                     continue
-                raise BitrixError(method, code, str(data.get('error_description', '')))
+                raise BitrixError(method, code, desc)
             return data
         raise BitrixError(method, 'RETRY', 'превышено число попыток')
 
-    async def call(self, method: str, params: dict | None = None) -> Any:
-        return (await self.raw(method, params)).get('result')
+    async def call(self, method: str, params: dict | None = None, *, v3: bool = False) -> Any:
+        return (await self.raw(method, params, v3=v3)).get('result')
+
+    async def method_info(self, name: str) -> dict:
+        """method.get: {'isExisting': bool, 'isAvailable': bool} — есть ли метод на этой коробке."""
+        try:
+            res = await self.call('method.get', {'name': name.lower()})
+        except BitrixError:
+            return {'isExisting': False, 'isAvailable': False}
+        return res if isinstance(res, dict) else {'isExisting': False, 'isAvailable': False}
 
     async def list(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 _CODE_BLOCK = re.compile(r'```[a-zA-Z0-9_+-]*\n?(.*?)```', re.DOTALL)
 
@@ -28,10 +29,11 @@ def md_to_bb(text: str) -> str:
     return re.sub(r'\x00(\d+)\x00', lambda m: f'[code]{blocks[int(m.group(1))]}[/code]', text).strip()
 
 
-def strip_bb(text: str, bot_id: int | None = None) -> str:
-    """Убрать упоминание бота и BB-разметку из входящего сообщения."""
-    if bot_id:
-        text = re.sub(rf'\[USER={bot_id}\].*?\[/USER\]\s*[,:]?', '', text, flags=re.IGNORECASE)
+def strip_bb(text: str, bot_id: int | Iterable[int] | None = None) -> str:
+    """Убрать упоминания агента (bot_id — один ID или несколько) и BB-разметку из входящего сообщения."""
+    ids = [bot_id] if isinstance(bot_id, int) else list(bot_id or [])
+    for uid in ids:
+        text = re.sub(rf'\[USER={uid}\].*?\[/USER\]\s*[,:]?', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\[USER=(\d+)\](.*?)\[/USER\]', r'\2 (ID \1)', text, flags=re.IGNORECASE)
     text = re.sub(r'\[/?(b|i|u|s|code|quote|color[^\]]*|size[^\]]*|url[^\]]*)\]', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\[br\]', '\n', text, flags=re.IGNORECASE)

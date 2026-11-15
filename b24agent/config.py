@@ -38,6 +38,11 @@ def _float(name: str, default: float) -> float:
     return float(raw) if raw and raw.strip() else default
 
 
+def _list(name: str) -> tuple[str, ...]:
+    raw = os.getenv(name) or ''
+    return tuple(x.strip() for x in raw.replace(';', ',').split(',') if x.strip())
+
+
 def _ids(name: str) -> frozenset[int]:
     raw = os.getenv(name) or ''
     return frozenset(int(x) for x in raw.replace(';', ',').split(',') if x.strip().isdigit())
@@ -70,6 +75,11 @@ class Settings:
     bot_color: str = 'AQUA'
     bot_client_id: str = 'b24_ai_agent_client'
     bot_openline: bool = False
+    bot_api: str = 'v2'  # v2 — imbot.v2 (рекомендуется) | v1 — устаревший imbot.*
+    bot_event_mode: str = 'fetch'  # fetch — агент сам забирает события (закрытый контур) | webhook — push
+    bot_token: str = ''  # секрет бота для imbot.v2 через вебхук (произвольная строка, до 40 символов)
+    bot_type: str = 'bot'  # v2: bot (личка и @упоминания) | supervisor (все сообщения в своих чатах)
+    bot_poll_interval: float = 3
 
     # --- HTTP-приёмник событий ---
     public_url: str = ''
@@ -85,6 +95,18 @@ class Settings:
     extra_prompt: str = ''
     timeline_reply_mode: str = 'watched'  # watched: упоминание + все комментарии отслеживаемых объектов; mention: только упоминание
     timeline_poll_interval: int = 0
+    # Сканирование таймлайнов недавно активных элементов (закрытый контур без событий):
+    timeline_scan_types: tuple[str, ...] = ()  # например ('deal', '1038')
+    timeline_scan_interval: int = 60
+    timeline_mention_ids: frozenset[int] = frozenset()  # кроме бота: ID сервисного пользователя вебхука
+
+    # --- Инструменты и расширения ---
+    tools_disabled: frozenset[str] = frozenset()
+    plugins: tuple[str, ...] = ()
+    plugins_dir: Path = Path('plugins')
+    bitrix_call: str = 'read'  # off | read | full
+    bitrix_call_allow: tuple[str, ...] = ()
+    bitrix_call_deny: tuple[str, ...] = ()
 
     data_dir: Path = Path('data')
     log_level: str = 'INFO'
@@ -107,7 +129,7 @@ def load_settings(env_file: str | None = None) -> Settings:
         msg = (
             'Не задан BITRIX_WEBHOOK_URL. Создайте входящий вебхук в коробке: '
             'Приложения → Разработчикам → Другое → Входящий вебхук '
-            '(права: crm, task, user, im, imbot) и укажите URL вида '
+            '(права: crm, task, user, im, imbot, department, sonet, calendar, bizproc, lists) и укажите URL вида '
             'https://portal.company.ru/rest/1/xxxxxxxx/'
         )
         raise RuntimeError(msg)
@@ -143,6 +165,11 @@ def load_settings(env_file: str | None = None) -> Settings:
         bot_color=os.getenv('BOT_COLOR') or 'AQUA',
         bot_client_id=os.getenv('BOT_CLIENT_ID') or f'{bot_code}_client',
         bot_openline=_bool('BOT_OPENLINE', False),
+        bot_api=(os.getenv('BOT_API') or 'v2').lower(),
+        bot_event_mode=(os.getenv('BOT_EVENT_MODE') or 'fetch').lower(),
+        bot_token=os.getenv('BOT_TOKEN') or '',
+        bot_type=(os.getenv('BOT_TYPE') or 'bot').lower(),
+        bot_poll_interval=_float('BOT_POLL_INTERVAL', 3),
         public_url=(os.getenv('PUBLIC_URL') or '').rstrip('/'),
         event_secret=os.getenv('EVENT_SECRET') or '',
         http_host=os.getenv('HTTP_HOST') or '0.0.0.0',
@@ -154,6 +181,15 @@ def load_settings(env_file: str | None = None) -> Settings:
         extra_prompt=extra_prompt,
         timeline_reply_mode=(os.getenv('TIMELINE_REPLY_MODE') or 'watched').lower(),
         timeline_poll_interval=_int('TIMELINE_POLL_INTERVAL', 0),
+        timeline_scan_types=_list('TIMELINE_SCAN_TYPES'),
+        timeline_scan_interval=_int('TIMELINE_SCAN_INTERVAL', 60),
+        timeline_mention_ids=_ids('TIMELINE_MENTION_IDS'),
+        tools_disabled=frozenset(_list('TOOLS_DISABLED')),
+        plugins=_list('TOOL_PLUGINS'),
+        plugins_dir=Path(os.getenv('PLUGINS_DIR') or 'plugins'),
+        bitrix_call=(os.getenv('BITRIX_CALL') or 'read').lower(),
+        bitrix_call_allow=tuple(x.lower() for x in _list('BITRIX_CALL_ALLOW')),
+        bitrix_call_deny=tuple(x.lower() for x in _list('BITRIX_CALL_DENY')),
         data_dir=Path(os.getenv('DATA_DIR') or 'data'),
         log_level=(os.getenv('LOG_LEVEL') or 'INFO').upper(),
     )

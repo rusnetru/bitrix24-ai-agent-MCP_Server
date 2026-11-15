@@ -9,15 +9,18 @@ from b24agent.bot import BotService
 from b24agent.config import Settings
 from b24agent.entities import EntityRegistry
 from b24agent.formatting import md_to_bb, strip_bb
-from b24agent.imbot import ImBot
+from b24agent.imbot import ImBotV1, ImBotV2
 from b24agent.store import Store
-from b24agent.tools import ToolContext, Toolbox
+from b24agent.tools import ToolContext, build_toolbox
+from b24agent.tools.crm import _default_select
 from b24agent.web import create_app, unflatten
 
 BOT_ID = 77
 
 
 class FakeBitrix:
+    webhook_user_id = 1
+
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
 
@@ -25,7 +28,7 @@ class FakeBitrix:
         self.calls.append((method, params or {}))
         return self.respond(method, params or {})
 
-    async def raw(self, method, params=None):
+    async def raw(self, method, params=None, v3=False):
         return {'result': await self.call(method, params)}
 
     async def list(self, method, params=None, limit=50, key=None):
@@ -56,6 +59,8 @@ class FakeBitrix:
             return [{'ID': params.get('ID'), 'NAME': 'Анна', 'LAST_NAME': 'Иванова'}]
         if method in {'imbot.message.add', 'crm.timeline.comment.add'}:
             return 1001
+        if method == 'imbot.v2.Chat.Message.send':
+            return {'id': 1002}
         return True
 
 
@@ -84,7 +89,7 @@ def settings(tmp_path):
 def env(settings):
     b24 = FakeBitrix()
     store = Store(settings.data_dir)
-    return b24, store, EntityRegistry(b24), Toolbox()
+    return b24, store, EntityRegistry(b24), build_toolbox()
 
 
 def native_call(name, args):
@@ -121,11 +126,11 @@ async def test_agent_native_tool_loop(env, settings):
     llm = FakeLLM([native_call('crm_list', {'entity': 'Проекты', 'filter': {'%title': 'Внедр'}}),
                    {'content': '<think>…</think>Найден проект **Внедрение**'}], settings)
     agent = Agent(llm, tb)
-    ctx = ToolContext(b24=b24, entities=reg, settings=settings, store=store, user_id=3)
+    ctx = ToolContext(b24=b24, entities=reg, settings=settings, store=store, tb=tb, user_id=3)
     answer = await agent.run(ctx, [], 'найди проект', [])
     assert 'Внедрение' in answer
     assert ('crm.item.list', {'entityTypeId': 1038, 'filter': {'%title': 'Внедр'},
-                              'select': tb._default_select(await reg.get(1038)), 'order': {'id': 'desc'}}) \
+                              'select': _default_select(await reg.get(1038)), 'order': {'id': 'desc'}}) \
         in [(m, {k: v for k, v in p.items() if k != 'start'}) for m, p in b24.calls]
     tool_msg = llm.seen[1][0][-1]
     assert tool_msg['role'] == 'tool' and 'stageName' in tool_msg['content']
@@ -136,7 +141,7 @@ async def test_agent_json_mode(env, settings):
     s = replace(settings, llm_tool_mode='json')
     llm = FakeLLM([{'content': '{"tool": "crm_get", "arguments": {"entity": 1038, "id": 5}}'},
                    {'content': '{"answer": "Приоритет высокий"}'}], s)
-    ctx = ToolContext(b24=b24, entities=reg, settings=s, store=store)
+    ctx = ToolContext(b24=b24, entities=reg, settings=s, store=store, tb=tb)
     assert await Agent(llm, tb).run(ctx, [], 'приоритет?', []) == 'Приоритет высокий'
     assert 'Высокий' in llm.seen[1][0][-1]['content']  # значение списка расшифровано
 
@@ -147,10 +152,11 @@ async def test_read_only_hides_write_tools(env, settings):
     assert 'crm_list' in names and 'crm_update' not in names and 'task_add' not in names
 
 
-async def make_bot(env, settings, script):
+async def make_bot(env, settings, script, api='v1'):
     b24, store, reg, tb = env
+    await store.set(f'bot_id_{api}', BOT_ID)
     await store.set('bot_id', BOT_ID)
-    imbot = ImBot(b24, settings, store)
+    imbot = (ImBotV1 if api == 'v1' else ImBotV2)(b24, settings, store)
     await imbot.load()
     return BotService(b24, settings, store, reg, tb, Agent(FakeLLM(script, settings), tb), imbot)
 
@@ -187,7 +193,7 @@ async def test_timeline_mention_reply(env, settings):
     added = [p for m, p in bot.b24.calls if m == 'crm.timeline.comment.add']
     assert len(added) == 1
     f = added[0]['fields']
-    assert f['ENTITY_TYPE'] == 'dynamic_1038' and f['ENTITY_ID'] == 5 and f['AUTHOR_ID'] == BOT_ID
+    assert f['ENTITY_TYPE'] == 'dynamic_1038' and f['ENTITY_ID'] == 5
     assert f['COMMENT'].startswith('[USER=3]Анна Иванова[/USER], ')
 
 
@@ -216,3 +222,111 @@ async def test_http_endpoint_secret(env, settings):
                                                                 'data[PARAMS][DIALOG_ID]': '3'})
         assert r.status == 200
     assert got == [{'event': 'ONIMBOTJOINCHAT', 'data': {'PARAMS': {'DIALOG_ID': '3'}}}]
+
+
+async def test_v2_fetch_message_flow(env, settings):
+    bot = await make_bot(env, settings, [{'content': 'Ответ v2'}], api='v2')
+    await bot.handle({'event': 'ONIMBOTV2MESSAGEADD', 'data': {
+        'bot': {'id': BOT_ID},
+        'message': {'id': 55, 'chatId': 9, 'authorId': 3, 'text': 'привет'},
+        'chat': {'id': 9, 'dialogId': 'chat9', 'type': 'private'},
+        'user': {'id': 3, 'name': 'Анна', 'bot': False}}})
+    sent = [p for m, p in bot.b24.calls if m == 'imbot.v2.Chat.Message.send']
+    assert len(sent) == 1
+    assert sent[0]['dialogId'] == '3'  # личный диалог адресуется ID пользователя
+    assert sent[0]['botId'] == BOT_ID and sent[0]['botToken'] and sent[0]['fields']['message'] == 'Ответ v2'
+
+
+async def test_v2_fetch_loop_acks_offset(env, settings, monkeypatch):
+    import asyncio as aio
+    bot = await make_bot(env, settings, [], api='v2')
+    got = []
+    bot.submit = got.append
+    pages = [{'events': [{'eventId': 7, 'type': 'ONIMBOTV2JOINCHAT', 'data': {}}], 'nextOffset': 8, 'hasMore': False}]
+    offsets = []
+
+    async def fake_fetch(offset, limit=100):
+        offsets.append(offset)
+        if pages:
+            return pages.pop(0)
+        raise aio.CancelledError
+
+    bot.imbot.fetch = fake_fetch
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr('b24agent.bot.asyncio.sleep', no_sleep)
+    with pytest.raises(aio.CancelledError):
+        await bot.fetch_loop()
+    assert offsets == [0, 8] and got[0]['event'] == 'ONIMBOTV2JOINCHAT'
+    assert await bot.store.get('v2_event_offset') == 8
+
+
+async def test_webhook_user_mention_triggers_and_own_comments_ignored(env, settings):
+    bot = await make_bot(env, settings, [{'content': 'ок'}])
+    await bot.on_timeline_comment(600, {'ENTITY_ID': 5, 'ENTITY_TYPE': 'dynamic_1038', 'AUTHOR_ID': 3,
+                                        'COMMENT': '[USER=1]Сервис ИИ[/USER] посмотри'})
+    await bot.on_timeline_comment(601, {'ENTITY_ID': 5, 'ENTITY_TYPE': 'dynamic_1038', 'AUTHOR_ID': 1,
+                                        'COMMENT': '[USER=1]Сервис ИИ[/USER] свой ответ'})
+    assert len([m for m, _ in bot.b24.calls if m == 'crm.timeline.comment.add']) == 1
+
+
+def test_bitrix_call_policy(settings):
+    from b24agent.tools.generic import check_policy
+    ctx = ToolContext(b24=None, entities=None, settings=settings, store=None)
+    assert check_policy(ctx, 'calendar.event.get') is None
+    assert 'только для чтения' in check_policy(ctx, 'crm.deal.update')
+    full = ToolContext(b24=None, entities=None, settings=replace(settings, bitrix_call='full'), store=None)
+    assert check_policy(full, 'crm.deal.update') is None
+    assert 'запрещён' in check_policy(full, 'crm.deal.delete')
+    assert 'batch' in check_policy(full, 'batch')
+    allow = replace(settings, bitrix_call='full', bitrix_call_allow=('crm.deal.delete',))
+    assert check_policy(ToolContext(b24=None, entities=None, settings=allow, store=None), 'crm.deal.delete') is None
+
+
+def test_plugins_loaded_from_dir(settings, tmp_path):
+    pdir = tmp_path / 'plugins'
+    pdir.mkdir()
+    (pdir / 'sales.py').write_text(
+        'from b24agent.tools import schema\n'
+        'def register(tb):\n'
+        '    @tb.tool("sales_kpi", "KPI отдела продаж", schema({}))\n'
+        '    async def kpi(ctx, args):\n'
+        '        return {"ok": 1}\n'
+        '    tb.remove("crm_todo_add")\n', encoding='utf-8')
+    s = replace(settings, plugins_dir=pdir, tools_disabled=frozenset({'crm_add'}))
+    tb = build_toolbox(s)
+    names = {t.name for t in tb.available(s, True)}
+    assert 'sales_kpi' in names and 'crm_todo_add' not in names and 'crm_add' not in names
+    assert tb.tools['sales_kpi'].group.endswith('sales.py')
+
+
+async def test_timeline_scan_picks_new_comments(env, settings, monkeypatch):
+    import asyncio as aio
+    bot = await make_bot(env, settings, [{'content': 'ответ'}])
+    await bot.store.set('scan_cursor_1038', '2026-11-15T10:00:00+03:00')
+    orig = bot.b24.respond
+
+    def respond(method, params):
+        if method == 'crm.item.list':
+            return {'items': [{'id': 5, 'lastActivityTime': '2026-11-15T10:05:00+03:00'}]}
+        if method == 'crm.timeline.comment.list':
+            return [{'ID': '700', 'AUTHOR_ID': '3', 'CREATED': '2026-11-15T10:04:00+03:00',
+                     'COMMENT': f'[USER={BOT_ID}]ИИ[/USER] статус?'},
+                    {'ID': '650', 'AUTHOR_ID': '3', 'CREATED': '2026-11-15T09:00:00+03:00',
+                     'COMMENT': f'[USER={BOT_ID}]ИИ[/USER] старое'}]
+        return orig(method, params)
+
+    bot.b24.respond = respond
+    bot.s = replace(settings, timeline_scan_types=('1038',), timeline_scan_interval=1)
+
+    async def stop(_):
+        raise aio.CancelledError
+
+    monkeypatch.setattr('b24agent.bot.asyncio.sleep', stop)
+    with pytest.raises(aio.CancelledError):
+        await bot.scan_timelines()
+    added = [p for m, p in bot.b24.calls if m == 'crm.timeline.comment.add']
+    assert len(added) == 1  # старый комментарий (до курсора) не обрабатывается
+    assert await bot.store.get('scan_cursor_1038') == '2026-11-15T10:05:00+03:00'

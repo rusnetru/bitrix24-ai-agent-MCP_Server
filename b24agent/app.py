@@ -6,7 +6,7 @@ from b24agent.bitrix import Bitrix
 from b24agent.config import Settings
 from b24agent.entities import EntityRegistry
 from b24agent.store import Store
-from b24agent.tools import Toolbox
+from b24agent.tools import build_toolbox
 
 
 class App:
@@ -15,7 +15,7 @@ class App:
         self.b24 = Bitrix(settings.webhook_url, settings.verify_ssl, settings.bitrix_timeout)
         self.entities = EntityRegistry(self.b24)
         self.store = Store(settings.data_dir)
-        self.toolbox = Toolbox()
+        self.toolbox = build_toolbox(settings)
 
     async def close(self) -> None:
         await self.b24.close()

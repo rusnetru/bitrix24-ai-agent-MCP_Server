@@ -23,7 +23,8 @@ async def run_mcp(app: App) -> None:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict | None) -> list[types.TextContent]:
-        ctx = ToolContext(b24=app.b24, entities=app.entities, settings=app.settings, store=app.store)
+        ctx = ToolContext(b24=app.b24, entities=app.entities, settings=app.settings, store=app.store,
+                          tb=app.toolbox)
         result = await app.toolbox.execute(ctx, name, arguments or {})
         return [types.TextContent(type='text', text=result)]
 
