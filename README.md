@@ -1,201 +1,141 @@
-# Bitrix24 MCP Server
+# Bitrix24 AI Agent + MCP (коробочная версия)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/)
-[![MCP](https://img.shields.io/badge/MCP-compatible-purple.svg)](https://modelcontextprotocol.io/)
+ИИ-агент для **коробочного Битрикс24**. Он работает как сотрудник портала и подключается к корпоративной LLM (например, Qwen) через **LiteLLM** по API-ключу.
 
-**MCP-сервер для Bitrix24 CRM: подключите AI-агента к сделкам, контактам и чатам за 5 минут.**
+- **Отдельный чат с агентом**: бот появляется в мессенджере, с ним можно переписываться лично.
+- **Чат по объекту**: агент работает в контексте сделки, контакта или элемента **смарт-процесса**. Можно привязать к объекту существующий чат, создать новый чат по объекту или добавить бота в штатный чат CRM-карточки.
+- **Комментарии в таймлайне**: упомяните агента в комментарии любого объекта CRM или смарт-процесса, и он ответит комментарием там же. Можно также включить отслеживание таймлайна объекта, тогда агент отвечает на все новые комментарии.
+- **Данные**: сделки, контакты, компании, лиды, предложения, счета, **любые смарт-процессы** (через универсальный `crm.item.*`), задачи, сотрудники.
+- **MCP-сервер** с тем же набором инструментов для Claude Desktop, Cursor и других MCP-клиентов.
 
-Bitrix24 MCP Server предоставляет стандартизированный [Model Context Protocol](https://modelcontextprotocol.io/) интерфейс, через который любой AI-агент (Claude, GPT, DeepSeek, локальные LLM) может:
+```
+Сотрудник ─ чат / @упоминание в таймлайне ─► Битрикс24 (коробка)
+                                               │ события imbot / OnCrmTimelineCommentAdd
+                                               ▼
+                                     b24agent serve  ◄──► LiteLLM ◄──► Qwen
+                                               │ REST (входящий вебхук)
+                                               ▼
+                                     CRM · смарт-процессы · задачи · пользователи
+```
 
-- 🔍 Искать контакты, сделки, лиды
-- 📝 Создавать и обновлять CRM-сущности
-- 💬 Отвечать в чатах Bitrix24 как обычный сотрудник
-- 📋 Писать комментарии в таймлайн сделок
+## Требования
 
-Всё через единый протокол. Без написания REST-обёрток. Без парсинга вебхуков. Один раз настроил — и забыл.
+- Битрикс24 «коробка» с модулями CRM, задач и мессенджера (`im`, `imbot`). Нужна версия, где есть `crm.item.*` и смарт-процессы (CRM 21+).
+- Python 3.11+ (или [uv](https://docs.astral.sh/uv/)).
+- Сервер, на котором работает агент, должен быть доступен **с сервера Битрикс24** по HTTP: туда приходят события. Хватает адреса во внутренней сети, публичный HTTPS не нужен.
+- LiteLLM proxy с OpenAI-совместимым API.
 
-## Быстрый старт (5 минут)
-
-### 1. Установка
+## Установка
 
 ```bash
-pip install bitrix24-mcp
+git clone https://github.com/rusnetru/bitrix24-mcp.git && cd bitrix24-mcp
+uv sync            # или: pip install -e .
+cp .env.example .env
 ```
 
-### 2. Настройка
+### 1. Входящий вебхук
 
-Создайте входящий вебхук в Bitrix24 (права: `crm`, `imbot`, `user`) и пропишите URL:
+Откройте раздел **Приложения → Разработчикам → Другое → Входящий вебхук** и выдайте права `crm`, `task`, `user`, `im`, `imbot`. Вебхук создавайте от пользователя-администратора или специальной сервисной учётки: агент видит и меняет данные **с правами этого пользователя**. URL вебхука пропишите в `BITRIX_WEBHOOK_URL`.
+
+Если у портала самоподписанный сертификат, укажите `BITRIX_VERIFY_SSL=false` или путь к корневому CA (`.pem`).
+
+### 2. LLM (LiteLLM → Qwen)
+
+```env
+LLM_BASE_URL=http://litellm.company.local:4000/v1
+LLM_API_KEY=sk-...
+LLM_MODEL=qwen          # model_name из config.yaml LiteLLM
+LLM_TOOL_MODE=auto
+```
+
+Режимы вызова инструментов:
+
+- `auto` (по умолчанию): нативные `tool_calls` в формате OpenAI. Если прокси отвечает, что tools не поддерживаются, агент сам переходит на JSON-протокол. Он также понимает теги `<tool_call>…</tool_call>`, которые Qwen пишет текстом, когда vLLM запущен без `--tool-call-parser`.
+- `json`: инструменты описываются в промпте, модель отвечает JSON-объектом. Работает с любой моделью.
+- `native`: только нативные tools.
+
+Для Qwen3 можно отключить «размышления»: `LLM_EXTRA_BODY={"chat_template_kwargs": {"enable_thinking": false}}`. Блоки `<think>` в любом случае вырезаются из ответа.
+
+### 3. Проверка и регистрация бота
 
 ```bash
-export BITRIX_WEBHOOK_URL="https://your.bitrix24.ru/rest/1/your-token/"
+uv run b24agent check     # вебхук, права, смарт-процессы, LLM и поддержка tools
+uv run b24agent ask "сколько открытых сделок у пользователя 1?"   # агент из консоли
+uv run b24agent setup     # регистрирует бота (imbot.register через вебхук) и подписку на таймлайн
+uv run b24agent serve     # приём событий
 ```
 
-### 3. Запуск
+`setup` регистрирует бота по `BOT_CODE` / `BOT_CLIENT_ID` и подписывается на `ONCRMTIMELINECOMMENTADD`. Команду можно запускать повторно: при смене `PUBLIC_URL` она обновит адреса обработчиков. Если коробка не даёт подписаться на события через входящий вебхук, `setup` подскажет запасной путь: **исходящий вебхук** с событием `ONCRMTIMELINECOMMENTADD` на адрес `PUBLIC_URL/bitrix/events?secret=...` или опрос таймлайна (`TIMELINE_POLL_INTERVAL=30`).
 
-```bash
-bitrix24-mcp
-```
+Для постоянной работы запустите `b24agent serve` как службу: systemd, NSSM на Windows или Docker.
 
-Готово. Сервер слушает stdio — можно подключать AI-клиент (Claude Desktop, Cursor, Hermes Agent).
+## Как пользоваться
 
-## Подключение AI-агента к чатам Bitrix24
+**Личный чат.** Найдите бота в мессенджере по имени (`BOT_NAME`) и пишите ему.
 
-Сервер включает готовый слой для чат-ботов (`imbot`):
+- «Мои задачи на эту неделю»
+- «Найди контакт Иванов, покажи его сделки»
+- «Переведи сделку 123 на стадию „Договор“»
+- «Создай задачу Петрову по проекту 15 со сроком в пятницу»
 
-```python
-from src.domain.entities.bot_event import BotIncomingMessage, BotReply
-from src.application.services.chat_bot import ChatBotService
+**Чат по объекту (смарт-процесс, сделка, контакт).**
 
-class MyAIAgent:
-    """Ваш AI-агент. Единственное, что нужно написать."""
+- Напишите в любом чате с ботом: «привяжи этот чат к проекту 15». После этого агент отвечает в контексте объекта.
+- Или попросите: «создай чат по сделке 123». Бот создаст групповой чат с ответственным и автором запроса и оставит ссылку на него в таймлайне.
+- Ещё вариант: добавьте бота в штатный чат CRM-карточки. Привязка определяется автоматически по `CHAT_ENTITY_TYPE=CRM`.
+- В групповых чатах обращайтесь к боту через @упоминание. `/context` покажет, к чему привязан чат.
 
-    async def handle_message(self, message: BotIncomingMessage) -> BotReply:
-        # Вызовите свою LLM
-        answer = await my_llm.ask(message.text)
-        return BotReply(
-            text=answer,
-            # Опционально: дублировать в таймлайн сделки
-            timeline_comment=TimelineCommentTarget(
-                entity_type="deal",
-                entity_id=123
-            )
-        )
+**Таймлайн.**
 
-# Регистрация — остальное сервер берёт на себя
-chat_bot_service.register_agent(bot_id, MyAIAgent())
-```
+- Упомяните бота в комментарии (`@ИИ-агент какая сейчас стадия?`), и он ответит комментарием в таймлайне от своего имени.
+- «Следи за таймлайном сделки 123»: агент будет отвечать на все новые комментарии этого объекта (режим `TIMELINE_REPLY_MODE=watched`).
 
-После регистрации ваш AI-агент появляется в общих чатах Bitrix24 как обычный сотрудник. Менеджер пишет — агент отвечает. Комментарии автоматически попадают в таймлайн.
+**Команды.** `/help` показывает справку, `/clear` очищает историю диалога, `/context` показывает привязку.
 
-## MCP-инструменты
+## Безопасность
 
-### CRM: Контакты
+- `EVENT_SECRET` добавляется в URL обработчика, и запросы без него отклоняются.
+- `AGENT_ALLOW_WRITE=false` включает режим только чтения. Инструменты изменения тогда даже не передаются модели.
+- `AGENT_ALLOWED_USERS=1,15,27` ограничивает круг сотрудников, которые могут общаться с агентом.
+- Агент действует с правами пользователя вебхука. Если нужны ограничения, создайте сервисного пользователя с нужными правами CRM.
+- `AGENT_PROMPT_FILE` задаёт файл с регламентами компании, который дописывается в системный промпт.
 
-| Инструмент | Описание |
-|-----------|----------|
-| `get_contact` | Получить контакт по ID |
-| `search_contacts` | Поиск по имени, телефону, email |
-| `list_contacts` | Список с фильтрацией |
+История диалогов, привязки чатов и список отслеживаемых объектов хранятся в `DATA_DIR/agent.sqlite3`.
 
-### CRM: Сделки
+## Инструменты (агент и MCP)
 
-| Инструмент | Описание |
-|-----------|----------|
-| `get_deal` | Сделка по ID |
-| `list_deals` | Список с фильтрами (активные, по контакту) |
-| `update_deal_stage` | Передвинуть сделку по воронке |
-| `create_deal` | Создать новую сделку |
+| Группа | Инструменты |
+|---|---|
+| Справочники | `crm_entity_types`, `crm_fields`, `crm_pipelines` |
+| CRM и смарт-процессы: чтение | `crm_list`, `crm_search`, `crm_get`, `crm_timeline`, `crm_related` |
+| CRM: изменение | `crm_add`, `crm_update`, `crm_comment_add` |
+| Задачи | `task_list`, `task_get`, `task_comments`, `task_add`, `task_update`, `task_comment_add` |
+| Сотрудники | `user_search`, `user_get` |
+| Только в чате с ботом | `chat_bind_entity`, `chat_create_for_entity`, `timeline_watch` |
 
-### CRM: Лиды
+Тип объекта можно передать как `deal`, `contact`, `company`, `lead`, `quote`, `invoice`, как entityTypeId смарт-процесса (`1038`) или как его название («Проекты»).
 
-| Инструмент | Описание |
-|-----------|----------|
-| `create_lead` | Создать лид |
-| `list_leads` | Список с поиском |
-| `get_lead` | Лид по ID |
-
-### Чат-бот
-
-| Инструмент | Описание |
-|-----------|----------|
-| `ChatBotService.register_bot` | Зарегистрировать бота в портале |
-| `ChatBotService.register_agent` | Подключить AI-агента к боту |
-| `ChatBotService.dispatch_event` | Обработка входящих сообщений |
-
-### Задачи
-
-| Инструмент | Описание |
-|-----------|----------|
-| `search_tasks` | Поиск задач |
-| `create_task` | Создать задачу |
-| `get_task_by_id` | Задача по ID |
-
-## MCP-ресурсы
-
-AI-агент может запрашивать данные по URI:
-
-| Ресурс | Пример | Назначение |
-|--------|--------|------------|
-| `contact://{id}` | `contact://123` | Данные контакта |
-| `deal://{id}` | `deal://456` | Данные сделки |
-| `deals://active` | `deals://active` | Все активные сделки |
-
-## Подключение к AI-клиентам
-
-### Claude Desktop
+## MCP-клиенты
 
 ```json
 {
   "mcpServers": {
     "bitrix24": {
-      "command": "bitrix24-mcp",
-      "env": {
-        "BITRIX_WEBHOOK_URL": "https://your.bitrix24.ru/rest/1/token/"
-      }
+      "command": "uv",
+      "args": ["--directory", "/path/to/bitrix24-mcp", "run", "b24agent", "mcp"]
     }
   }
 }
 ```
 
-### Hermes Agent
+Настройки читаются из `.env` в каталоге проекта.
 
-```yaml
-mcp_servers:
-  bitrix24:
-    transport: stdio
-    command: bitrix24-mcp
-    env:
-      BITRIX_WEBHOOK_URL: "https://your.bitrix24.ru/rest/1/token/"
-```
-
-### Cursor / VS Code
-
-Добавьте в `.cursor/mcp.json` или настройки Cursor MCP.
-
-## Чат-бот: полный пример
+## Разработка
 
 ```bash
-export BOT_EVENT_HANDLER_URL="https://your-domain.example.com/bot/events"
-python examples/custom_agent_example.py
+uv sync --group dev
+uv run pytest
+uv run ruff check b24agent tests
 ```
 
-Сервер регистрирует бота, поднимает HTTP-обработчик вебхуков и подключает AI-агента. Подробнее: [docs/source/ai_chat_agent.rst](docs/source/ai_chat_agent.rst).
-
-## Архитектура
-
-```
-AI-клиент (Claude/DeepSeek/GPT)
-        │
-        ▼ MCP (stdio)
-┌───────────────────────┐
-│  Bitrix24 MCP Server  │
-│                       │
-│  ┌─────────────────┐  │
-│  │  MCP Handlers   │  │  ← CRM: contacts, deals, leads
-│  ├─────────────────┤  │
-│  │  ChatBotService │  │  ← imbot: register, dispatch, reply
-│  ├─────────────────┤  │
-│  │  WebhookServer  │  │  ← HTTP: приём событий Bitrix24
-│  └─────────────────┘  │
-└───────────┬───────────┘
-            │ REST API (fast_bitrix24)
-            ▼
-     Bitrix24 Cloud
-```
-
-## Требования
-
-- Python 3.12+
-- Входящий вебхук Bitrix24 (права: `crm`, `imbot`, `user`)
-- Для чат-бота: публичный HTTPS URL (ngrok, cloudflared, или любой хостинг) для приёма вебхуков
-
-## Лицензия
-
-MIT. Подробности в [LICENSE](LICENSE).
-
-## Ссылки
-
-- [Model Context Protocol](https://modelcontextprotocol.io/)
-- [Bitrix24 REST API](https://dev.1c-bitrix.ru/rest_help/)
-- [AgentIREST — AI-агенты для бизнеса](https://agentirest.com)
+Лицензия: MIT.
