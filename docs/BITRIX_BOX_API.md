@@ -343,6 +343,8 @@
   - `bizproc.task.list` (свои задания; админ видит все), `bizproc.task.complete {TASK_ID, STATUS 1/2/3/4, COMMENT, FIELDS}`;
   - `bizproc.workflow.start {TEMPLATE_ID, DOCUMENT_ID:["crm","CCrmDocumentDeal","DEAL_1"] | ["crm","Bitrix\\Crm\\Integration\\BizProc\\Document\\Dynamic","DYNAMIC_147_1"] | ["lists","BizprocDocument","777"], PARAMETERS}` — только админ;
   - 🟡 `bizproc.workflow.instances`, `bizproc.workflow.terminate`.
+- ✅ **Участник БП** ([BP_PARTICIPANT.md](BP_PARTICIPANT.md)): `bizproc.task.list` (свои задания) → `bizproc.task.complete`, эскалация через `bizproc.task.delegate {TASK_IDS, FROM_USER_ID, TO_USER_ID}` (параметры делегирования не сверены со страницей метода; проверьте на коробке).
+- ⛔ **Шаблоны:** `bizproc.workflow.template.add/update/delete` — «только в контексте приложения», нужен администратор; шаблон, созданный приложением, может менять только оно. `template.list` (только админ) отдаёт `TEMPLATE` (дерево действий), `PARAMETERS`, `VARIABLES`, `CONSTANTS`. Шаблоны роботов на стадиях CRM, смарт-процессов и задач в REST **недоступны**. Формат `.bpt` не документирован.
 - **Универсальные списки** ✅:
   - `IBLOCK_TYPE_ID`: `lists`, `bitrix_processes` (процессы в ленте), `lists_socnet` (+ `SOCNET_GROUP_ID`);
   - `lists.element.add` требует `ELEMENT_CODE`; множественные свойства передаются массивом;

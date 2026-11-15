@@ -106,6 +106,7 @@ BITRIX_CALL_DENY=crm.*.delete
 | MCP по сети (Streamable HTTP) | `mcp_server.py`: обёртка для `mcp.server.streamable_http` вместо stdio |
 | Новые форматы файлов, OCR сканов, vision-модель для картинок | `files.py` (`extract_text`); или плагин, переопределяющий `file_read` |
 | Что готовит автопомощь | `AUTO_ASSIST_PROMPT_FILE`; логика поиска новых писем и файлов — `BotService.assist_loop` |
+| Поведение в заданиях БП: новые типы действий, правила решений | `bp_participant.py` (`ACTIVITY_DECISIONS`, `PROMPT`, `_validate`); общие правила — `BP_AGENT_PROMPT_FILE` |
 | Типы CRM, префиксы, ссылки | `entities.py` (`STANDARD`, `ALIASES`, `EntityType.url`) |
 
 ## Соглашения

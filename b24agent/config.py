@@ -115,6 +115,16 @@ class Settings:
     auto_assist_max: int = 10  # не больше N справок за один проход
     auto_assist_prompt: str = ''
 
+    # --- Участник бизнес-процессов ---
+    bp_agent: bool = False
+    bp_poll_interval: int = 60
+    bp_decisions: frozenset[str] = frozenset({'approve', 'reject', 'ok', 'cancel'})
+    bp_min_confidence: float = 0.5
+    bp_escalate_to: int | None = None
+    bp_max_per_cycle: int = 5
+    bp_timeline_note: bool = True
+    bp_extra_prompt: str = ''
+
     # --- Инструменты и расширения ---
     tools_disabled: frozenset[str] = frozenset()
     plugins: tuple[str, ...] = ()
@@ -207,6 +217,14 @@ def load_settings(env_file: str | None = None) -> Settings:
         auto_assist_interval=_int('AUTO_ASSIST_INTERVAL', 120),
         auto_assist_max=_int('AUTO_ASSIST_MAX', 10),
         auto_assist_prompt=_read(os.getenv('AUTO_ASSIST_PROMPT_FILE') or ''),
+        bp_agent=_bool('BP_AGENT', False),
+        bp_poll_interval=_int('BP_POLL_INTERVAL', 60),
+        bp_decisions=frozenset(x.lower() for x in (_list('BP_AGENT_DECISIONS') or ('approve', 'reject', 'ok', 'cancel'))),
+        bp_min_confidence=_float('BP_MIN_CONFIDENCE', 0.5),
+        bp_escalate_to=_int('BP_AGENT_ESCALATE_TO', 0) or None,
+        bp_max_per_cycle=_int('BP_MAX_PER_CYCLE', 5),
+        bp_timeline_note=_bool('BP_TIMELINE_NOTE', True),
+        bp_extra_prompt=_read(os.getenv('BP_AGENT_PROMPT_FILE') or ''),
         tools_disabled=frozenset(_list('TOOLS_DISABLED')),
         plugins=_list('TOOL_PLUGINS'),
         plugins_dir=Path(os.getenv('PLUGINS_DIR') or 'plugins'),

@@ -131,7 +131,7 @@ class Agent:
             content = (await self.llm.chat(messages)).get('content') or ''
             data = _extract_json(content)
             if not data or 'answer' in data or 'tool' not in data:
-                return str(data.get('answer')) if data and 'answer' in data else content
+                return _answer_text(data) if data and 'answer' in data else content
             name = str(data.get('tool'))
             args = data.get('arguments') or {}
             log.info('tool(json) %s %s', name, _short(args))
@@ -141,7 +141,12 @@ class Agent:
         messages.append({'role': 'user', 'content': 'Лимит шагов исчерпан. Ответь {"answer": "..."} по собранным данным.'})
         content = (await self.llm.chat(messages)).get('content') or ''
         data = _extract_json(content)
-        return str(data.get('answer')) if data and 'answer' in data else content
+        return _answer_text(data) if data and 'answer' in data else content
+
+
+def _answer_text(data: dict) -> str:
+    ans = data.get('answer')
+    return json.dumps(ans, ensure_ascii=False) if isinstance(ans, (dict, list)) else str(ans)
 
 
 def _loads(raw: str | dict) -> dict:

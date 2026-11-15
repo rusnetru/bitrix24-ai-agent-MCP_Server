@@ -1,6 +1,6 @@
 [project]
 name = "bitrix24-mcp"
-version = "2.2.0"
+version = "2.3.0"
 description = "AI agent (chat bot + CRM timeline) and MCP server for self-hosted Bitrix24 (box), LLM via LiteLLM"
 readme = "README.md"
 requires-python = ">=3.11"

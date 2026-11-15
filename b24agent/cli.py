@@ -14,6 +14,7 @@ from b24agent.agent import Agent
 from b24agent.app import App
 from b24agent.bitrix import BitrixError
 from b24agent.bot import BotService
+from b24agent.bp_participant import BPParticipant
 from b24agent.config import Settings, load_settings
 from b24agent.imbot import make_imbot
 from b24agent.llm import LLM
@@ -153,6 +154,9 @@ async def cmd_serve(app: App) -> int:
         tasks.append(asyncio.create_task(bot.scan_timelines()))
     if s.auto_assist_types:
         tasks.append(asyncio.create_task(bot.assist_loop()))
+    if s.bp_agent:
+        bp = BPParticipant(app.b24, s, app.store, app.entities, app.toolbox, bot.agent, bot.imbot)
+        tasks.append(asyncio.create_task(bp.loop()))
     try:
         await asyncio.Event().wait()
     finally:
