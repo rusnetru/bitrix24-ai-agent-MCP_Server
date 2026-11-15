@@ -56,7 +56,7 @@
 3. **Сервер.** Нужна машина в контуре, которой доступны портал и LiteLLM, с Python 3.11+ или [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git clone https://github.com/rusnetru/bitrix24-mcp.git && cd bitrix24-mcp
+git clone https://github.com/rusnetru/bitrix24-ai-agent.git && cd bitrix24-ai-agent
 uv sync            # или: pip install -e .
 cp .env.example .env
 ```
@@ -162,7 +162,7 @@ uv run b24agent serve     # работа агента
   "mcpServers": {
     "bitrix24": {
       "command": "uv",
-      "args": ["--directory", "/path/to/bitrix24-mcp", "run", "b24agent", "mcp"]
+      "args": ["--directory", "/path/to/bitrix24-ai-agent", "run", "b24agent", "mcp"]
     }
   }
 }
